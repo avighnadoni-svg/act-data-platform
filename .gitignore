@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# Airflow
+airflow.db
+airflow.cfg
+standalone_admin_password.txt
+logs/*
+!logs/.gitkeep
+
+# Temporary data
+data/temp/*
+!data/temp/.gitkeep
+
+# dbt
+dbt_act/target/
+dbt_act/logs/
+dbt_act/dbt_packages/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store

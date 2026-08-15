@@ -1,0 +1,82 @@
+{"timestamp":"2026-08-15T20:16:25.494383Z","level":"info","event":"::group::Pre Execute","logger":"task","filename":"task_runner.py","lineno":2303}
+{"timestamp":"2026-08-15T20:16:25.578536Z","level":"info","event":"DAG bundles loaded: dags-folder, example_dags, apache-airflow-providers-common-sql-example-dags, apache-airflow-providers-standard-example-dags","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager","filename":"manager.py","lineno":271}
+{"timestamp":"2026-08-15T20:16:25.579476Z","level":"info","event":"Filling up the DagBag from /workspaces/act-data-platform/dags/act_pipeline_dag.py","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"airflow.dag_processing.dagbag.BundleDagBag","filename":"dagbag.py","lineno":460}
+{"timestamp":"2026-08-15T20:16:25.690864Z","level":"info","event":"Worker startup parse complete","bundle_name":"dags-folder","bundle_version":null,"dag_file":"act_pipeline_dag.py","dag_id":"act_rave_ingestion","bundle_prepare_ms":12,"dag_file_parse_ms":111,"run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"task","filename":"task_runner.py","lineno":1062}
+{"timestamp":"2026-08-15T20:16:25.729889Z","level":"info","event":"Task instance is in running state","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:25.730146Z","level":"info","event":" Previous state of the Task instance: TaskInstanceState.QUEUED","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:25.730308Z","level":"info","event":"Current task name:extract_rave_to_csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:25.730460Z","level":"info","event":"Dag name:act_rave_ingestion","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:25.727459Z","level":"info","event":"::endgroup::","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"task","filename":"task_runner.py","lineno":2107}
+{"timestamp":"2026-08-15T20:16:26.143854Z","level":"info","event":"Starting ACT Rave extraction...","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:26.144141Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:26.144305Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:26.144449Z","level":"info","event":"Processing: study","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:26.144590Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:26.144721Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/studies","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.108843Z","level":"info","event":"Records received: 1","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.113066Z","level":"info","event":"study: 1 records written to data/temp/study.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.113416Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.113671Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.115059Z","level":"info","event":"Processing: site","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.115273Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:28.115447Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/sites","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.072862Z","level":"info","event":"Records received: 5","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.084070Z","level":"info","event":"site: 5 records written to data/temp/site.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.084398Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.084629Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.085225Z","level":"info","event":"Processing: subject","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.086924Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:30.087177Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/subjects","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.106861Z","level":"info","event":"Records received: 5","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.120259Z","level":"info","event":"subject: 5 records written to data/temp/subject.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.120554Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.120713Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.120935Z","level":"info","event":"Processing: visit","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.121086Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:33.121237Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/visits","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.550230Z","level":"info","event":"Records received: 5","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.558155Z","level":"info","event":"visit: 5 records written to data/temp/visit.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.558933Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.559670Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.559968Z","level":"info","event":"Processing: adverse_event","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.560198Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:34.560377Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/adverse-events","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:35.994860Z","level":"info","event":"Records received: 5","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:35.999092Z","level":"info","event":"adverse_event: 5 records written to data/temp/adverse_event.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:35.999478Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:35.999786Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:36.000934Z","level":"info","event":"Processing: lab_result","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:36.001147Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:36.001314Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/lab-results","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.588315Z","level":"info","event":"Records received: 5","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.591921Z","level":"info","event":"lab_result: 5 records written to data/temp/lab_result.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.592200Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.592399Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.592631Z","level":"info","event":"Processing: protocol_deviation","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.592903Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:37.593087Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/protocol-deviations","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.840851Z","level":"info","event":"Records received: 4","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.858136Z","level":"info","event":"protocol_deviation: 4 records written to data/temp/protocol_deviation.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.859131Z","level":"info","event":"","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.859352Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.859701Z","level":"info","event":"Processing: data_query","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.859970Z","level":"info","event":"==================================================","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:40.860225Z","level":"info","event":"Calling: https://probable-xylophone-jj6gx774wq54hj54j-8000.app.github.dev/data-queries","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.655472Z","level":"info","event":"Records received: 4","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.658887Z","level":"info","event":"data_query: 4 records written to data/temp/data_query.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.659436Z","level":"info","event":"Files created: 8","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.659605Z","level":"info","event":"data/temp/study.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.659852Z","level":"info","event":"data/temp/site.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.660060Z","level":"info","event":"data/temp/subject.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.660246Z","level":"info","event":"data/temp/visit.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.660434Z","level":"info","event":"data/temp/adverse_event.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.660623Z","level":"info","event":"data/temp/lab_result.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.660843Z","level":"info","event":"data/temp/protocol_deviation.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.661035Z","level":"info","event":"data/temp/data_query.csv","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.659023Z","level":"info","event":"Done. Returned value was: ['data/temp/study.csv', 'data/temp/site.csv', 'data/temp/subject.csv', 'data/temp/visit.csv', 'data/temp/adverse_event.csv', 'data/temp/lab_result.csv', 'data/temp/protocol_deviation.csv', 'data/temp/data_query.csv']","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"airflow.task.operators.airflow.providers.standard.decorators.python._PythonDecoratedOperator","filename":"python.py","lineno":233}
+{"timestamp":"2026-08-15T20:16:42.659215Z","level":"info","event":"::group::Post Execute","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"task","filename":"task_runner.py","lineno":1577}
+{"timestamp":"2026-08-15T20:16:42.659420Z","level":"info","event":"Pushing xcom","ti":"RuntimeTaskInstance(id=UUID('01a00711-8735-7c50-8ede-d95b4859be35'), task_id='extract_rave_to_csv', dag_id='act_rave_ingestion', run_id='manual__2026-08-15T20:16:24.334078+00:00', try_number=1, dag_version_id=UUID('01a006fc-b5af-70e2-8c41-0e2b4ccb5214'), map_index=-1, hostname='codespaces-b6dc20', context_carrier={'traceparent': '00-6594606c5ab30a898e226bc80f9f965e-8e3f4df6dcc0767f-00'}, queue='default', task=<Task(_PythonDecoratedOperator): extract_rave_to_csv>, bundle_instance=LocalDagBundle(name=dags-folder), max_tries=2, start_date=datetime.datetime(2026, 8, 15, 20, 16, 25, 534907, tzinfo=datetime.timezone.utc), end_date=None, state=<TaskInstanceState.RUNNING: 'running'>, is_mapped=False, rendered_map_index=None, sentry_integration='')","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"task","filename":"task_runner.py","lineno":2171}
+{"timestamp":"2026-08-15T20:16:42.689141Z","level":"info","event":"Task instance in success state","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.689424Z","level":"info","event":" Previous state of the Task instance: TaskInstanceState.RUNNING","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.689695Z","level":"info","event":"Task operator:<Task(_PythonDecoratedOperator): extract_rave_to_csv>","logger":"task.stdout"}
+{"timestamp":"2026-08-15T20:16:42.689360Z","level":"info","event":"::endgroup::","run_id":"manual__2026-08-15T20:16:24.334078+00:00","task_id":"extract_rave_to_csv","try_number":1,"map_index":-1,"dag_id":"act_rave_ingestion","ti_id":"01a00711-8735-7c50-8ede-d95b4859be35","logger":"task","filename":"task_runner.py","lineno":2270}

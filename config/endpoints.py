@@ -1,37 +1,7 @@
 # config/endpoints.py
 
 
-# ============================================================
-# ACT RAVE SOURCE ENDPOINT CONFIGURATION
-# ============================================================
-#
-# path
-#     FastAPI endpoint
-#
-# format
-#     Expected source format
-#
-# content_type
-#     Expected HTTP Content-Type
-#
-# primary_key
-#     Used later for validation
-#
-# watermark_field
-#     Field used for incremental extraction
-#
-# s3_prefix
-#     Landing path in S3
-#
-# ============================================================
-
-
 ENDPOINTS = {
-
-    # --------------------------------------------------------
-    # STUDY
-    # Nested JSON
-    # --------------------------------------------------------
 
     "study": {
         "path": "studies",
@@ -39,14 +9,13 @@ ENDPOINTS = {
         "content_type": "application/json",
         "primary_key": "study_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "study_id",
+            "study_name",
+            "updated_at",
+        ],
         "s3_prefix": "study",
     },
-
-
-    # --------------------------------------------------------
-    # SITE
-    # CSV
-    # --------------------------------------------------------
 
     "site": {
         "path": "sites",
@@ -54,14 +23,13 @@ ENDPOINTS = {
         "content_type": "text/csv",
         "primary_key": "site_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "site_id",
+            "study_id",
+            "updated_at",
+        ],
         "s3_prefix": "site",
     },
-
-
-    # --------------------------------------------------------
-    # SUBJECT
-    # Nested JSON
-    # --------------------------------------------------------
 
     "subject": {
         "path": "subjects",
@@ -69,14 +37,14 @@ ENDPOINTS = {
         "content_type": "application/json",
         "primary_key": "subject_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "subject_id",
+            "study_id",
+            "site_id",
+            "updated_at",
+        ],
         "s3_prefix": "subject",
     },
-
-
-    # --------------------------------------------------------
-    # VISIT
-    # XML
-    # --------------------------------------------------------
 
     "visit": {
         "path": "visits",
@@ -84,14 +52,13 @@ ENDPOINTS = {
         "content_type": "application/xml",
         "primary_key": "visit_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "visit_id",
+            "subject_id",
+            "updated_at",
+        ],
         "s3_prefix": "visit",
     },
-
-
-    # --------------------------------------------------------
-    # ADVERSE EVENT
-    # Complex XML
-    # --------------------------------------------------------
 
     "adverse_event": {
         "path": "adverse-events",
@@ -99,14 +66,14 @@ ENDPOINTS = {
         "content_type": "application/xml",
         "primary_key": "ae_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "ae_id",
+            "subject_id",
+            "event_term",
+            "updated_at",
+        ],
         "s3_prefix": "adverse_event",
     },
-
-
-    # --------------------------------------------------------
-    # LAB RESULT
-    # Nested JSON
-    # --------------------------------------------------------
 
     "lab_result": {
         "path": "lab-results",
@@ -114,14 +81,14 @@ ENDPOINTS = {
         "content_type": "application/json",
         "primary_key": "lab_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "lab_id",
+            "subject_id",
+            "test_name",
+            "updated_at",
+        ],
         "s3_prefix": "lab_result",
     },
-
-
-    # --------------------------------------------------------
-    # PROTOCOL DEVIATION
-    # CSV
-    # --------------------------------------------------------
 
     "protocol_deviation": {
         "path": "protocol-deviations",
@@ -129,14 +96,14 @@ ENDPOINTS = {
         "content_type": "text/csv",
         "primary_key": "deviation_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "deviation_id",
+            "subject_id",
+            "site_id",
+            "updated_at",
+        ],
         "s3_prefix": "protocol_deviation",
     },
-
-
-    # --------------------------------------------------------
-    # DATA QUERY
-    # XML
-    # --------------------------------------------------------
 
     "data_query": {
         "path": "data-queries",
@@ -144,14 +111,16 @@ ENDPOINTS = {
         "content_type": "application/xml",
         "primary_key": "query_id",
         "watermark_field": "updated_at",
+        "required_fields": [
+            "query_id",
+            "subject_id",
+            "site_id",
+            "updated_at",
+        ],
         "s3_prefix": "data_query",
     },
 }
 
-
-# ============================================================
-# COMMON SETTINGS
-# ============================================================
 
 DEFAULT_PAGE_SIZE = 100
 

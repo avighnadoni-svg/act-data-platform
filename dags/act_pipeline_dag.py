@@ -54,18 +54,7 @@ MAX_DISCOVERY_PAGES = 1000
 # ============================================================
 
 @dag(
-
     dag_id=DAG_ID,
-
-    # --------------------------------------------------------
-    # Manual execution for now.
-    #
-    # Later we can change this to:
-    #
-    # schedule="0 */6 * * *"
-    #
-    # or another production schedule.
-    # --------------------------------------------------------
 
     schedule=None,
 
@@ -78,16 +67,9 @@ MAX_DISCOVERY_PAGES = 1000
 
     catchup=False,
 
-    # --------------------------------------------------------
-    # IMPORTANT
-    #
-    # Do not allow two ACT ingestion DagRuns to execute
-    # simultaneously.
-    #
-    # This protects study/entity watermark state.
-    # --------------------------------------------------------
-
     max_active_runs=1,
+
+    is_paused_upon_creation=False,
 
     tags=[
         "ACT",
@@ -99,8 +81,8 @@ MAX_DISCOVERY_PAGES = 1000
     ],
 
     description=(
-        "Multi-study ACT clinical ingestion from "
-        "Rave API to AWS S3 with incremental watermarks"
+        "Multi-study ACT clinical ingestion "
+        "from Rave API to AWS S3"
     ),
 )
 def act_rave_ingestion():
@@ -108,7 +90,6 @@ def act_rave_ingestion():
 
     # ========================================================
     # TASK 1
-    #
     # DISCOVER STUDIES
     # ========================================================
 
@@ -133,21 +114,13 @@ def act_rave_ingestion():
     )
     def discover_studies() -> list[str]:
         """
-        Discover all studies currently available
-        from the Rave source.
+        Discover studies dynamically from Rave API.
 
-        IMPORTANT:
+        Example:
 
-        API call happens at TASK RUNTIME,
-        not while Airflow parses the DAG.
-
-        Example output:
-
-            [
-                "ONC101",
-                "ONC102",
-                "ONC103"
-            ]
+            ONC101
+            ONC102
+            ONC103
         """
 
         from src.api.rave_client import (
@@ -180,22 +153,18 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # OPEN API SESSION
+        # API SESSION
         # ====================================================
 
         with RaveAPIClient() as client:
 
 
-            # =================================================
-            # PAGINATION
-            # =================================================
-
             while True:
 
 
-                # ---------------------------------------------
-                # DEFENSIVE LIMIT
-                # ---------------------------------------------
+                # ============================================
+                # DEFENSIVE PAGE LIMIT
+                # ============================================
 
                 if (
                     pages_processed
@@ -205,9 +174,7 @@ def act_rave_ingestion():
                     raise DataValidationError(
                         (
                             "Maximum study discovery "
-                            "page limit exceeded "
-                            f"limit="
-                            f"{MAX_DISCOVERY_PAGES}"
+                            "page limit exceeded"
                         )
                     )
 
@@ -223,30 +190,37 @@ def act_rave_ingestion():
                 )
 
 
-                # =============================================
-                # STUDIES API
-                # =============================================
+                # ============================================
+                # CALL STUDY API
+                # ============================================
 
-                response = client.get_page(
+                response = (
+                    client.get_page(
 
-                    entity_name="study",
+                        entity_name=
+                            "study",
 
-                    offset=offset,
+                        offset=
+                            offset,
 
-                    limit=DISCOVERY_PAGE_SIZE,
+                        limit=
+                            DISCOVERY_PAGE_SIZE,
+                    )
                 )
 
 
-                # =============================================
-                # JSON -> FLAT RECORDS
-                # =============================================
+                # ============================================
+                # PARSE JSON
+                # ============================================
 
                 page_records = (
                     parse_response(
 
-                        entity_name="study",
+                        entity_name=
+                            "study",
 
-                        raw_text=response.text,
+                        raw_text=
+                            response.text,
                     )
                 )
 
@@ -263,30 +237,34 @@ def act_rave_ingestion():
                     (
                         "study_discovery_page_completed "
                         "page_number=%s "
-                        "records=%s"
+                        "record_count=%s"
                     ),
                     pages_processed,
                     page_count,
                 )
 
 
-                # =============================================
-                # EMPTY PAGE
-                # =============================================
+                # ============================================
+                # NO DATA
+                # ============================================
 
                 if page_count == 0:
 
                     break
 
 
+                # ============================================
+                # APPEND
+                # ============================================
+
                 all_records.extend(
                     page_records
                 )
 
 
-                # =============================================
+                # ============================================
                 # LAST PAGE
-                # =============================================
+                # ============================================
 
                 if (
                     page_count
@@ -296,9 +274,9 @@ def act_rave_ingestion():
                     break
 
 
-                # =============================================
+                # ============================================
                 # NEXT PAGE
-                # =============================================
+                # ============================================
 
                 offset += (
                     DISCOVERY_PAGE_SIZE
@@ -312,35 +290,36 @@ def act_rave_ingestion():
         if not all_records:
 
             raise DataValidationError(
-                (
-                    "No studies returned "
-                    "from Rave source"
-                )
+                "No studies returned from Rave API"
             )
 
 
         # ====================================================
-        # VALIDATE STUDY DATA
+        # VALIDATE STUDIES
         # ====================================================
 
         validation = (
             validate_records(
 
-                entity_name="study",
+                entity_name=
+                    "study",
 
-                records=all_records,
+                records=
+                    all_records,
             )
         )
 
 
         # ====================================================
-        # STUDY IDS
+        # STUDY LIST
         # ====================================================
 
         study_ids = (
 
             validation
-            .dataframe["study_id"]
+            .dataframe[
+                "study_id"
+            ]
 
             .astype(str)
 
@@ -377,19 +356,12 @@ def act_rave_ingestion():
         )
 
 
-        # ----------------------------------------------------
-        # Small metadata only.
-        #
-        # Perfectly suitable for XCom.
-        # ----------------------------------------------------
-
         return study_ids
 
 
     # ========================================================
     # TASK 2
-    #
-    # BUILD STUDY × ENTITY MATRIX
+    # BUILD STUDY × ENTITY WORK ITEMS
     # ========================================================
 
     @task(
@@ -399,31 +371,18 @@ def act_rave_ingestion():
         study_ids: list[str],
     ) -> list[dict]:
         """
-        Build runtime work items.
+        Create:
 
-        Example:
+            study × entity
 
-        One study:
+        work items.
 
-            ONC101
+        IMPORTANT:
 
-        produces eight work items:
+        load_date is generated ONCE here and passed
+        downstream.
 
-            ONC101 + study
-            ONC101 + site
-            ONC101 + subject
-            ONC101 + visit
-            ONC101 + adverse_event
-            ONC101 + lab_result
-            ONC101 + protocol_deviation
-            ONC101 + data_query
-
-
-        Two studies:
-
-            2 × 8
-            =
-            16 mapped tasks
+        We no longer depend on logical_date.
         """
 
         from config.endpoints import (
@@ -438,6 +397,23 @@ def act_rave_ingestion():
             )
 
 
+        # ====================================================
+        # LOAD DATE
+        #
+        # Actual UTC ingestion date.
+        #
+        # Generated once and stored in the XCom work items,
+        # therefore all mapped tasks receive the same date.
+        # ====================================================
+
+        load_date = (
+            pendulum
+            .now("UTC")
+            .date()
+            .isoformat()
+        )
+
+
         entities = list(
             ENDPOINTS.keys()
         )
@@ -447,8 +423,6 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # CROSS PRODUCT
-        #
         # STUDY × ENTITY
         # ====================================================
 
@@ -463,6 +437,9 @@ def act_rave_ingestion():
 
                         "entity_name":
                             entity_name,
+
+                        "load_date":
+                            load_date,
                     }
                 )
 
@@ -472,11 +449,13 @@ def act_rave_ingestion():
                 "ingestion_work_items_created "
                 "study_count=%s "
                 "entity_count=%s "
-                "work_item_count=%s"
+                "work_item_count=%s "
+                "load_date=%s"
             ),
             len(study_ids),
             len(entities),
             len(work_items),
+            load_date,
         )
 
 
@@ -485,47 +464,15 @@ def act_rave_ingestion():
 
     # ========================================================
     # TASK 3
-    #
-    # INGEST ONE STUDY + ONE ENTITY
-    #
-    # DYNAMICALLY MAPPED
+    # ONE STUDY + ONE ENTITY
     # ========================================================
 
     @task(
-
         task_id="ingest_study_entity",
-
-        # ----------------------------------------------------
-        # Friendly names in Airflow UI.
-        #
-        # Instead of:
-        #
-        # ingest_study_entity[0]
-        #
-        # we will see:
-        #
-        # ONC101__adverse_event
-        # ----------------------------------------------------
 
         map_index_template=(
             "{{ act_map_name }}"
         ),
-
-
-        # ----------------------------------------------------
-        # TASK RETRIES
-        #
-        # HTTP client itself handles short transient
-        # request-level retries.
-        #
-        # Airflow retry handles the complete transaction:
-        #
-        # API
-        # parse
-        # validate
-        # S3
-        # watermark
-        # ----------------------------------------------------
 
         retries=2,
 
@@ -543,15 +490,6 @@ def act_rave_ingestion():
             minutes=30
         ),
 
-
-        # ----------------------------------------------------
-        # CONCURRENCY
-        #
-        # Do not execute all study/entity calls at once.
-        #
-        # Maximum 4 mapped instances concurrently.
-        # ----------------------------------------------------
-
         max_active_tis_per_dag=4,
 
         max_active_tis_per_dagrun=4,
@@ -560,13 +498,11 @@ def act_rave_ingestion():
         work_item: dict,
     ) -> dict:
         """
-        Execute one complete incremental ingestion unit.
+        Execute one ingestion unit.
 
         Example:
 
-            ONC101
-               +
-            adverse_event
+            ONC101 + adverse_event
         """
 
         from src.api.extract_all import (
@@ -575,7 +511,7 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # TASK CONTEXT
+        # AIRFLOW CONTEXT
         # ====================================================
 
         context = (
@@ -584,7 +520,7 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # STUDY + ENTITY
+        # WORK ITEM
         # ====================================================
 
         study_id = (
@@ -593,6 +529,7 @@ def act_rave_ingestion():
             ]
         )
 
+
         entity_name = (
             work_item[
                 "entity_name"
@@ -600,8 +537,19 @@ def act_rave_ingestion():
         )
 
 
+        load_date = (
+            work_item[
+                "load_date"
+            ]
+        )
+
+
         # ====================================================
-        # FRIENDLY MAPPED TASK NAME
+        # FRIENDLY MAP NAME
+        #
+        # Airflow UI:
+        #
+        # ONC101__adverse_event
         # ====================================================
 
         context[
@@ -614,40 +562,16 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # AIRFLOW RUN ID
+        # RUN ID
         #
-        # Stable across retries.
+        # run_id is stable across task retries.
         #
-        # Example:
-        #
-        # manual__2026-08-16T11:50:00+00:00
+        # We deliberately do NOT use logical_date here.
         # ====================================================
 
         run_id = context[
             "run_id"
         ]
-
-
-        # ====================================================
-        # LOAD DATE
-        #
-        # Use the DagRun logical date so the value stays
-        # stable if this task retries.
-        # ====================================================
-
-        logical_date = context[
-            "logical_date"
-        ]
-
-
-        load_date = (
-            logical_date
-            .in_timezone(
-                "UTC"
-            )
-            .date()
-            .isoformat()
-        )
 
 
         logger.info(
@@ -668,50 +592,25 @@ def act_rave_ingestion():
         # ====================================================
         # COMPLETE INGESTION
         # ====================================================
-        #
-        # This performs:
-        #
-        # watermark read
-        #      ↓
-        # Rave API
-        #      ↓
-        # pagination
-        #      ↓
-        # JSON/XML/CSV parsing
-        #      ↓
-        # validation
-        #      ↓
-        # Pandas normalization
-        #      ↓
-        # S3 upload
-        #      ↓
-        # S3 verification
-        #      ↓
-        # watermark commit
-        #
-        # IMPORTANT:
-        #
-        # commit_watermark=True
-        #
-        # We are now inside a real Airflow task context.
-        # ====================================================
 
-        result = ingest_study_entity(
+        result = (
+            ingest_study_entity(
 
-            study_id=
-                study_id,
+                study_id=
+                    study_id,
 
-            entity_name=
-                entity_name,
+                entity_name=
+                    entity_name,
 
-            run_id=
-                run_id,
+                run_id=
+                    run_id,
 
-            load_date=
-                load_date,
+                load_date=
+                    load_date,
 
-            commit_watermark=
-                True,
+                commit_watermark=
+                    True,
+            )
         )
 
 
@@ -739,19 +638,12 @@ def act_rave_ingestion():
         )
 
 
-        # ----------------------------------------------------
-        # Only small metadata is returned through XCom.
-        #
-        # Data itself remains in S3.
-        # ----------------------------------------------------
-
         return result_dict
 
 
     # ========================================================
     # TASK 4
-    #
-    # SUMMARY / REDUCE
+    # SUMMARY
     # ========================================================
 
     @task(
@@ -762,15 +654,7 @@ def act_rave_ingestion():
     ) -> dict:
         """
         Summarize all mapped ingestion results.
-
-        This task runs only after all mapped tasks
-        finish successfully.
         """
-
-        # ----------------------------------------------------
-        # Mapped output can arrive as a lazy sequence.
-        # Convert once to normal list.
-        # ----------------------------------------------------
 
         result_list = list(
             results
@@ -827,10 +711,12 @@ def act_rave_ingestion():
 
             for result in result_list
 
-            if result.get(
-                "load_type"
+            if (
+                result.get(
+                    "load_type"
+                )
+                == "FULL"
             )
-            == "FULL"
         )
 
 
@@ -840,10 +726,12 @@ def act_rave_ingestion():
 
             for result in result_list
 
-            if result.get(
-                "load_type"
+            if (
+                result.get(
+                    "load_type"
+                )
+                == "INCREMENTAL"
             )
-            == "INCREMENTAL"
         )
 
 
@@ -893,8 +781,8 @@ def act_rave_ingestion():
         logger.info(
             (
                 "act_ingestion_summary "
-                "studies=%s "
-                "tasks=%s "
+                "study_count=%s "
+                "task_count=%s "
                 "uploaded=%s "
                 "no_data=%s "
                 "records=%s "
@@ -944,28 +832,13 @@ def act_rave_ingestion():
     )
 
 
-    # ========================================================
-    # DYNAMIC TASK MAPPING
-    # ========================================================
-    #
-    # Airflow determines at runtime how many mapped
-    # instances are required.
-    #
-    # Example:
-    #
-    # 1 study × 8 entities
-    #
-    #     8 mapped task instances
-    #
-    # 10 studies × 8 entities
-    #
-    #     80 mapped task instances
-    # ========================================================
-
     ingestion_results = (
+
         ingest_one_study_entity
+
         .expand(
-            work_item=work_items
+            work_item=
+                work_items
         )
     )
 
@@ -976,14 +849,14 @@ def act_rave_ingestion():
 
 
 # ============================================================
-# DAG OBJECT
+# CREATE DAG
 # ============================================================
 
 dag = act_rave_ingestion()
 
 
 # ============================================================
-# LOCAL DAG TEST
+# LOCAL TEST
 # ============================================================
 
 if __name__ == "__main__":

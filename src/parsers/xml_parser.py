@@ -2,21 +2,29 @@
 
 import xml.etree.ElementTree as ET
 
-from src.common.exceptions import XMLParsingError
-from src.common.logging_config import get_logger
+from src.common.exceptions import (
+    XMLParsingError,
+)
+
+from src.common.logging_config import (
+    get_logger,
+)
 
 
 logger = get_logger(__name__)
 
 
 # ============================================================
-# HELPERS
+# COMMON HELPER
 # ============================================================
 
 def _text(
     element,
     path: str,
 ):
+    """
+    Safely return XML element text.
+    """
 
     if element is None:
         return None
@@ -46,20 +54,37 @@ def _parse_visit(
 
     output = []
 
+
     visits = root.findall(
         "./Body/Visits/Visit"
     )
 
+
     for visit in visits:
+
+        study = visit.find(
+            "./References/Study"
+        )
 
         subject = visit.find(
             "./References/Subject"
         )
 
+
         output.append(
             {
+
                 "visit_id":
-                    visit.get("id"),
+                    visit.get(
+                        "id"
+                    ),
+
+                "study_id":
+                    (
+                        study.get("id")
+                        if study is not None
+                        else None
+                    ),
 
                 "subject_id":
                     (
@@ -77,13 +102,21 @@ def _parse_visit(
                 "planned_date":
                     _text(
                         visit,
-                        "./Schedule/Dates/PlannedDate",
+                        (
+                            "./Schedule/"
+                            "Dates/"
+                            "PlannedDate"
+                        ),
                     ),
 
                 "actual_date":
                     _text(
                         visit,
-                        "./Schedule/Dates/ActualDate",
+                        (
+                            "./Schedule/"
+                            "Dates/"
+                            "ActualDate"
+                        ),
                     ),
 
                 "updated_at":
@@ -93,6 +126,7 @@ def _parse_visit(
                     ),
             }
         )
+
 
     return output
 
@@ -107,20 +141,46 @@ def _parse_adverse_event(
 
     output = []
 
+
     events = root.findall(
         "./Body/AdverseEvents/AdverseEvent"
     )
 
+
     for event in events:
+
+        study = event.find(
+            "./References/Study"
+        )
 
         subject = event.find(
             "./References/Subject"
         )
 
+        seriousness = event.find(
+            (
+                "./ClinicalEvent/"
+                "EventDetails/"
+                "Classification/"
+                "Seriousness"
+            )
+        )
+
+
         output.append(
             {
+
                 "ae_id":
-                    event.get("id"),
+                    event.get(
+                        "id"
+                    ),
+
+                "study_id":
+                    (
+                        study.get("id")
+                        if study is not None
+                        else None
+                    ),
 
                 "subject_id":
                     (
@@ -134,7 +194,8 @@ def _parse_adverse_event(
                         event,
                         (
                             "./ClinicalEvent/"
-                            "EventDetails/Term"
+                            "EventDetails/"
+                            "Term"
                         ),
                     ),
 
@@ -151,23 +212,10 @@ def _parse_adverse_event(
 
                 "serious":
                     (
-                        event.find(
-                            (
-                                "./ClinicalEvent/"
-                                "EventDetails/"
-                                "Classification/"
-                                "Seriousness"
-                            )
-                        ).get("flag")
-                        if event.find(
-                            (
-                                "./ClinicalEvent/"
-                                "EventDetails/"
-                                "Classification/"
-                                "Seriousness"
-                            )
+                        seriousness.get(
+                            "flag"
                         )
-                        is not None
+                        if seriousness is not None
                         else None
                     ),
 
@@ -176,7 +224,8 @@ def _parse_adverse_event(
                         event,
                         (
                             "./ClinicalEvent/"
-                            "Timeline/EventDate"
+                            "Timeline/"
+                            "EventDate"
                         ),
                     ),
 
@@ -185,7 +234,8 @@ def _parse_adverse_event(
                         event,
                         (
                             "./ClinicalEvent/"
-                            "Timeline/ReportedDate"
+                            "Timeline/"
+                            "ReportedDate"
                         ),
                     ),
 
@@ -219,6 +269,7 @@ def _parse_adverse_event(
             }
         )
 
+
     return output
 
 
@@ -229,14 +280,29 @@ def _parse_adverse_event(
 def _parse_data_query(
     root,
 ) -> list[dict]:
+    """
+    Flatten Data Query XML.
+
+    ClinicalContext contains:
+
+        Study
+        Subject
+        Site
+    """
 
     output = []
+
 
     queries = root.findall(
         "./Body/Queries/DataQuery"
     )
 
+
     for query in queries:
+
+        study = query.find(
+            "./ClinicalContext/Study"
+        )
 
         subject = query.find(
             "./ClinicalContext/Subject"
@@ -246,10 +312,21 @@ def _parse_data_query(
             "./ClinicalContext/Site"
         )
 
+
         output.append(
             {
+
                 "query_id":
-                    query.get("id"),
+                    query.get(
+                        "id"
+                    ),
+
+                "study_id":
+                    (
+                        study.get("id")
+                        if study is not None
+                        else None
+                    ),
 
                 "subject_id":
                     (
@@ -268,34 +345,47 @@ def _parse_data_query(
                 "opened_date":
                     _text(
                         query,
-                        "./Lifecycle/OpenedDate",
+                        (
+                            "./Lifecycle/"
+                            "OpenedDate"
+                        ),
                     ),
 
                 "resolved_date":
                     _text(
                         query,
-                        "./Lifecycle/ResolvedDate",
+                        (
+                            "./Lifecycle/"
+                            "ResolvedDate"
+                        ),
                     ),
 
                 "status":
                     _text(
                         query,
-                        "./Lifecycle/Status",
+                        (
+                            "./Lifecycle/"
+                            "Status"
+                        ),
                     ),
 
                 "updated_at":
                     _text(
                         query,
-                        "./AuditTrail/UpdatedAt",
+                        (
+                            "./AuditTrail/"
+                            "UpdatedAt"
+                        ),
                     ),
             }
         )
+
 
     return output
 
 
 # ============================================================
-# PUBLIC FUNCTION
+# PUBLIC XML PARSER
 # ============================================================
 
 def parse_xml_response(
@@ -304,19 +394,45 @@ def parse_xml_response(
 ) -> list[dict]:
 
     logger.info(
-        "entity=%s xml_parsing_started",
+        (
+            "entity=%s "
+            "xml_parsing_started"
+        ),
         entity_name,
     )
 
+
+    # ========================================================
+    # EMPTY
+    # ========================================================
+
+    if not raw_text.strip():
+
+        logger.info(
+            (
+                "entity=%s "
+                "xml_response_empty"
+            ),
+            entity_name,
+        )
+
+        return []
+
+
     try:
 
-        if not raw_text.strip():
-
-            return []
+        # ====================================================
+        # PARSE XML
+        # ====================================================
 
         root = ET.fromstring(
             raw_text
         )
+
+
+        # ====================================================
+        # ROUTE ENTITY
+        # ====================================================
 
         if entity_name == "visit":
 
@@ -324,17 +440,20 @@ def parse_xml_response(
                 root
             )
 
+
         elif entity_name == "adverse_event":
 
             records = _parse_adverse_event(
                 root
             )
 
+
         elif entity_name == "data_query":
 
             records = _parse_data_query(
                 root
             )
+
 
         else:
 
@@ -344,6 +463,11 @@ def parse_xml_response(
                     f"for entity={entity_name}"
                 )
             )
+
+
+        # ====================================================
+        # SUCCESS
+        # ====================================================
 
         logger.info(
             (
@@ -355,17 +479,25 @@ def parse_xml_response(
             len(records),
         )
 
+
         return records
 
+
     except XMLParsingError:
+
         raise
+
 
     except ET.ParseError as exc:
 
         logger.exception(
-            "entity=%s invalid_xml",
+            (
+                "entity=%s "
+                "invalid_xml"
+            ),
             entity_name,
         )
+
 
         raise XMLParsingError(
             (
@@ -373,6 +505,7 @@ def parse_xml_response(
                 f"for entity={entity_name}"
             )
         ) from exc
+
 
     except Exception as exc:
 
@@ -383,6 +516,7 @@ def parse_xml_response(
             ),
             entity_name,
         )
+
 
         raise XMLParsingError(
             (

@@ -3,54 +3,77 @@
 import json
 from typing import Any
 
-from src.common.exceptions import JSONParsingError
-from src.common.logging_config import get_logger
+from src.common.exceptions import (
+    JSONParsingError,
+)
+
+from src.common.logging_config import (
+    get_logger,
+)
 
 
 logger = get_logger(__name__)
 
 
-def _parse_study(payload: dict[str, Any]) -> list[dict]:
+# ============================================================
+# STUDY
+# ============================================================
+
+def _parse_study(
+    payload: dict[str, Any],
+) -> list[dict]:
+    """
+    Flatten Study nested JSON.
+    """
 
     output = []
 
     records = payload.get(
         "data",
-        []
+        [],
     )
+
 
     for item in records:
 
         study = item.get(
             "study",
-            {}
+            {},
         )
 
         details = study.get(
             "details",
-            {}
+            {},
         )
 
         enrollment = study.get(
             "enrollment",
-            {}
+            {},
         )
 
         audit = item.get(
             "audit",
-            {}
+            {},
         )
+
 
         output.append(
             {
+
                 "study_id":
-                    study.get("identifier"),
+                    study.get(
+                        "identifier"
+                    ),
 
                 "study_name":
-                    details.get("name"),
+                    details.get(
+                        "name"
+                    ),
 
                 "phase":
-                    details.get("phase"),
+                    details.get(
+                        "phase"
+                    ),
 
                 "target_subjects":
                     enrollment.get(
@@ -64,74 +87,86 @@ def _parse_study(payload: dict[str, Any]) -> list[dict]:
             }
         )
 
+
     return output
 
 
+# ============================================================
+# SUBJECT
+# ============================================================
+
 def _parse_subject(
-    payload: dict[str, Any]
+    payload: dict[str, Any],
 ) -> list[dict]:
+    """
+    Flatten Subject nested JSON.
+    """
 
     output = []
 
+
     response = payload.get(
         "response",
-        {}
+        {},
     )
 
     records = response.get(
         "subjects",
-        []
+        [],
     )
+
 
     for item in records:
 
         subject = item.get(
             "subject",
-            {}
+            {},
         )
 
         trial_context = subject.get(
             "trial_context",
-            {}
+            {},
         )
 
         study = trial_context.get(
             "study",
-            {}
+            {},
         )
 
         site = trial_context.get(
             "site",
-            {}
+            {},
         )
 
         demographics = subject.get(
             "demographics",
-            {}
+            {},
         )
 
         clinical_status = subject.get(
             "clinical_status",
-            {}
+            {},
         )
 
         enrollment = subject.get(
             "enrollment",
-            {}
+            {},
         )
 
         audit = item.get(
             "audit",
-            {}
+            {},
         )
 
         timestamps = audit.get(
             "timestamps",
-            {}
+            {},
         )
+
 
         output.append(
             {
+
                 "subject_id":
                     subject.get(
                         "identifier"
@@ -174,73 +209,154 @@ def _parse_subject(
             }
         )
 
+
     return output
 
 
+# ============================================================
+# LAB RESULT
+# ============================================================
+
 def _parse_lab_result(
-    payload: dict[str, Any]
+    payload: dict[str, Any],
 ) -> list[dict]:
+    """
+    Flatten Lab Result nested JSON.
+
+    Lab Result now contains study_id.
+
+    Example:
+
+        lab_result
+            study
+                study_id
+            subject
+                subject_id
+            test
+                result
+    """
 
     output = []
 
+
     extract = payload.get(
         "laboratory_extract",
-        {}
+        {},
     )
+
 
     records = extract.get(
         "results",
-        []
+        [],
     )
+
 
     for item in records:
 
         lab = item.get(
             "lab_result",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # STUDY
+        # ----------------------------------------------------
+
+        study = lab.get(
+            "study",
+            {},
+        )
+
+
+        # ----------------------------------------------------
+        # SUBJECT
+        # ----------------------------------------------------
 
         subject = lab.get(
             "subject",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # TEST
+        # ----------------------------------------------------
 
         test = lab.get(
             "test",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # RESULT
+        # ----------------------------------------------------
 
         result = test.get(
             "result",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # REFERENCE RANGE
+        # ----------------------------------------------------
 
         reference_range = result.get(
             "reference_range",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # INTERPRETATION
+        # ----------------------------------------------------
 
         interpretation = result.get(
             "interpretation",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # METADATA
+        # ----------------------------------------------------
 
         metadata = item.get(
             "metadata",
-            {}
+            {},
         )
+
 
         audit = metadata.get(
             "audit",
-            {}
+            {},
         )
+
+
+        # ----------------------------------------------------
+        # FLAT RECORD
+        # ----------------------------------------------------
 
         output.append(
             {
+
                 "lab_id":
                     lab.get(
                         "identifier"
                     ),
+
+
+                # ============================================
+                # NEW
+                # ============================================
+
+                "study_id":
+                    study.get(
+                        "study_id"
+                    ),
+
 
                 "subject_id":
                     subject.get(
@@ -284,28 +400,51 @@ def _parse_lab_result(
             }
         )
 
+
     return output
 
 
 # ============================================================
-# PUBLIC FUNCTION
+# PUBLIC JSON PARSER
 # ============================================================
 
 def parse_json_response(
     entity_name: str,
     raw_text: str,
 ) -> list[dict]:
+    """
+    Parse JSON response based on ACT entity.
+
+    Supported:
+
+        study
+        subject
+        lab_result
+    """
 
     logger.info(
-        "entity=%s json_parsing_started",
+        (
+            "entity=%s "
+            "json_parsing_started"
+        ),
         entity_name,
     )
 
+
     try:
+
+        # ====================================================
+        # JSON DECODE
+        # ====================================================
 
         payload = json.loads(
             raw_text
         )
+
+
+        # ====================================================
+        # STUDY
+        # ====================================================
 
         if entity_name == "study":
 
@@ -313,17 +452,32 @@ def parse_json_response(
                 payload
             )
 
+
+        # ====================================================
+        # SUBJECT
+        # ====================================================
+
         elif entity_name == "subject":
 
             records = _parse_subject(
                 payload
             )
 
+
+        # ====================================================
+        # LAB RESULT
+        # ====================================================
+
         elif entity_name == "lab_result":
 
             records = _parse_lab_result(
                 payload
             )
+
+
+        # ====================================================
+        # UNKNOWN
+        # ====================================================
 
         else:
 
@@ -333,6 +487,11 @@ def parse_json_response(
                     f"for entity={entity_name}"
                 )
             )
+
+
+        # ====================================================
+        # SUCCESS
+        # ====================================================
 
         logger.info(
             (
@@ -344,17 +503,33 @@ def parse_json_response(
             len(records),
         )
 
+
         return records
 
+
+    # ========================================================
+    # KNOWN PARSER EXCEPTION
+    # ========================================================
+
     except JSONParsingError:
+
         raise
+
+
+    # ========================================================
+    # INVALID JSON
+    # ========================================================
 
     except json.JSONDecodeError as exc:
 
         logger.exception(
-            "entity=%s invalid_json",
+            (
+                "entity=%s "
+                "invalid_json"
+            ),
             entity_name,
         )
+
 
         raise JSONParsingError(
             (
@@ -362,6 +537,11 @@ def parse_json_response(
                 f"for entity={entity_name}"
             )
         ) from exc
+
+
+    # ========================================================
+    # OTHER ERROR
+    # ========================================================
 
     except Exception as exc:
 
@@ -372,6 +552,7 @@ def parse_json_response(
             ),
             entity_name,
         )
+
 
         raise JSONParsingError(
             (

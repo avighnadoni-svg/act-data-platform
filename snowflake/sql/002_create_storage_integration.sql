@@ -17,7 +17,7 @@ CREATE OR REPLACE STORAGE INTEGRATION ACT_S3_INT
     TYPE = EXTERNAL_STAGE
     STORAGE_PROVIDER = 'S3'
     ENABLED = TRUE
-    STORAGE_AWS_ROLE_ARN = '<% aws_role_arn %>'
+    STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::347754356200:role/snowflake_act_full_access'
     STORAGE_ALLOWED_LOCATIONS = (
         's3://act-clinical-data-dev/act/raw/'
     );

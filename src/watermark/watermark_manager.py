@@ -1,7 +1,5 @@
 # src/watermark/watermark_manager.py
 
-import re
-
 from dataclasses import dataclass
 
 from datetime import (
@@ -9,6 +7,11 @@ from datetime import (
     timedelta,
     timezone,
 )
+
+import os
+import re
+
+import snowflake.connector
 
 
 from config.endpoints import (
@@ -27,6 +30,19 @@ from src.common.logging_config import (
 
 
 logger = get_logger(__name__)
+
+
+# ============================================================
+# SNOWFLAKE WATERMARK CONFIGURATION
+# ============================================================
+
+DEFAULT_SNOWFLAKE_CONNECTION_NAME = (
+    "SNOWFLAKE_ACT_DEV"
+)
+
+WATERMARK_TABLE = (
+    "ACT_DB.CONTROL.WATERMARK"
+)
 
 
 # ============================================================
@@ -49,8 +65,8 @@ logger = get_logger(__name__)
 #     10:00:00
 #
 # This may re-read a very small number of records.
-# Downstream Snowflake processing will later deduplicate
-# by business key + updated_at.
+# Downstream Snowflake RAW processing deduplicates replayed
+# versions.
 # ============================================================
 
 DEFAULT_WATERMARK_OVERLAP_SECONDS = 5
@@ -65,6 +81,11 @@ class WatermarkState:
     """
     Current watermark information for one
     study + entity combination.
+
+    variable_key is retained only for backward compatibility
+    with any existing callers that inspect this dataclass.
+
+    It is NOT used to read or write Airflow Variables.
     """
 
     study_id: str
@@ -81,31 +102,36 @@ class WatermarkState:
 
 
 # ============================================================
-# AIRFLOW VARIABLE
+# CONNECTION NAME
 # ============================================================
 
-def _get_airflow_variable_class():
+def _get_connection_name() -> str:
     """
-    Lazy import of Airflow Variable.
+    Resolve the named Snowflake connection.
 
-    This avoids importing Airflow when modules are
-    imported for unit tests that do not require it.
+    Default:
+
+        SNOWFLAKE_ACT_DEV
+
+    Optional override:
+
+        SNOWFLAKE_CONNECTION_NAME
     """
 
-    try:
+    value = os.getenv(
+        "SNOWFLAKE_CONNECTION_NAME",
+        DEFAULT_SNOWFLAKE_CONNECTION_NAME,
+    ).strip()
 
-        from airflow.sdk import Variable
 
-        return Variable
-
-    except ImportError as exc:
+    if not value:
 
         raise ConfigurationError(
-            (
-                "Airflow is not installed or "
-                "airflow.sdk.Variable is unavailable"
-            )
-        ) from exc
+            "SNOWFLAKE_CONNECTION_NAME is empty"
+        )
+
+
+    return value
 
 
 # ============================================================
@@ -143,6 +169,7 @@ def _validate_study_id(
             "study_id cannot be empty"
         )
 
+
     cleaned = (
         study_id
         .strip()
@@ -161,22 +188,17 @@ def _validate_study_id(
 
 
 # ============================================================
-# VARIABLE KEY COMPONENT
+# LEGACY VARIABLE KEY
 # ============================================================
 
 def _sanitize_key_component(
     value: str,
 ) -> str:
     """
-    Make values safe for Airflow Variable keys.
+    Preserve the existing key format for WatermarkState
+    backward compatibility only.
 
-    Example:
-
-        ONC-101
-
-    remains:
-
-        ONC-101
+    No Airflow Variable API is called anywhere in this module.
     """
 
     return re.sub(
@@ -186,20 +208,16 @@ def _sanitize_key_component(
     )
 
 
-# ============================================================
-# BUILD VARIABLE KEY
-# ============================================================
-
 def _build_variable_key(
     study_id: str,
     entity_name: str,
 ) -> str:
     """
-    Build deterministic Airflow Variable key.
+    Return the old deterministic key string for compatibility.
 
-    Example:
-
-        act_watermark__ONC101__adverse_event
+    IMPORTANT:
+        This string is informational only.
+        Snowflake CONTROL.WATERMARK is the source of truth.
     """
 
     clean_study = (
@@ -227,52 +245,59 @@ def _build_variable_key(
 # ============================================================
 
 def _parse_timestamp(
-    value: str,
+    value: str | datetime,
 ) -> datetime:
     """
-    Parse ISO timestamp and normalize to UTC.
+    Parse timestamp and normalize to UTC.
 
-    Supports:
+    Supports strings such as:
 
         2026-08-16T08:10:26Z
 
-    and
-
         2026-08-16T08:10:26+00:00
+
+    and datetime objects returned by Snowflake.
     """
 
-    if not value:
+    if isinstance(
+        value,
+        datetime,
+    ):
 
-        raise ValueError(
-            "Timestamp cannot be empty"
-        )
-
-
-    timestamp_value = (
-        value.strip()
-    )
+        parsed = value
 
 
-    # --------------------------------------------------------
-    # Python fromisoformat prefers +00:00 instead of Z
-    # --------------------------------------------------------
+    else:
 
-    if timestamp_value.endswith("Z"):
+        if not value:
+
+            raise ValueError(
+                "Timestamp cannot be empty"
+            )
+
 
         timestamp_value = (
-            timestamp_value[:-1]
-            + "+00:00"
+            str(
+                value
+            )
+            .strip()
         )
 
 
-    parsed = datetime.fromisoformat(
-        timestamp_value
-    )
+        if timestamp_value.endswith(
+            "Z"
+        ):
+
+            timestamp_value = (
+                timestamp_value[:-1]
+                + "+00:00"
+            )
 
 
-    # --------------------------------------------------------
-    # If timezone missing, assume UTC
-    # --------------------------------------------------------
+        parsed = datetime.fromisoformat(
+            timestamp_value
+        )
+
 
     if parsed.tzinfo is None:
 
@@ -280,10 +305,6 @@ def _parse_timestamp(
             tzinfo=timezone.utc
         )
 
-
-    # --------------------------------------------------------
-    # Normalize everything to UTC
-    # --------------------------------------------------------
 
     return parsed.astimezone(
         timezone.utc
@@ -295,7 +316,7 @@ def _parse_timestamp(
 # ============================================================
 
 def _normalize_timestamp(
-    value: str,
+    value: str | datetime,
 ) -> str:
     """
     Return normalized UTC ISO timestamp.
@@ -321,14 +342,67 @@ class WatermarkManager:
 
         study_id + entity_name
 
-    Example:
+    Single source of truth:
 
-        ONC101 + adverse_event
+        ACT_DB.CONTROL.WATERMARK
 
-    Stored as Airflow Variable:
-
-        act_watermark__ONC101__adverse_event
+    Airflow Variables are NOT read or written.
     """
+
+    def __init__(
+        self,
+        connection_name: str | None = None,
+    ) -> None:
+
+        self.connection_name = (
+            connection_name
+            or _get_connection_name()
+        )
+
+
+    # ========================================================
+    # OPEN SNOWFLAKE CONNECTION
+    # ========================================================
+
+    def _connect(
+        self,
+    ):
+        """
+        Open a short-lived Snowflake transaction connection.
+        """
+
+        try:
+
+            return snowflake.connector.connect(
+                connection_name=
+                    self.connection_name,
+
+                application=
+                    "ACT_DATA_PLATFORM_WATERMARK",
+
+                autocommit=
+                    False,
+            )
+
+
+        except Exception as exc:
+
+            logger.exception(
+                (
+                    "watermark_snowflake_connection_failed "
+                    "connection_name=%s"
+                ),
+                self.connection_name,
+            )
+
+
+            raise WatermarkReadError(
+                (
+                    "Unable to connect to Snowflake "
+                    "for watermark processing"
+                )
+            ) from exc
+
 
     # ========================================================
     # GET STORED WATERMARK
@@ -340,7 +414,8 @@ class WatermarkManager:
         entity_name: str,
     ) -> str | None:
         """
-        Return the last successfully committed watermark.
+        Return the last successfully committed Snowflake
+        watermark.
 
         First run:
 
@@ -357,16 +432,9 @@ class WatermarkManager:
             )
         )
 
+
         _validate_entity(
             entity_name
-        )
-
-
-        variable_key = (
-            _build_variable_key(
-                clean_study_id,
-                entity_name,
-            )
         )
 
 
@@ -375,63 +443,111 @@ class WatermarkManager:
                 "study_id=%s "
                 "entity=%s "
                 "watermark_read_started "
-                "variable_key=%s"
+                "source=SNOWFLAKE "
+                "table=%s"
             ),
             clean_study_id,
             entity_name,
-            variable_key,
+            WATERMARK_TABLE,
         )
+
+
+        conn = None
 
 
         try:
 
-            Variable = (
-                _get_airflow_variable_class()
-            )
+            conn = self._connect()
 
 
-            value = Variable.get(
-                variable_key,
-                default=None,
-            )
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    f"""
+                    SELECT
+                        WATERMARK_VALUE
+                    FROM {WATERMARK_TABLE}
+                    WHERE STUDY_ID = %s
+                      AND ENTITY_NAME = %s
+                    ORDER BY UPDATED_AT DESC
+                    LIMIT 2
+                    """,
+                    (
+                        clean_study_id,
+                        entity_name,
+                    ),
+                )
+
+
+                rows = cur.fetchall()
+
+
+            conn.commit()
+
+
+        except WatermarkReadError:
+
+            if conn is not None:
+
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            raise
 
 
         except Exception as exc:
+
+            if conn is not None:
+
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
 
             logger.exception(
                 (
                     "study_id=%s "
                     "entity=%s "
                     "watermark_read_failed "
-                    "variable_key=%s"
+                    "source=SNOWFLAKE"
                 ),
                 clean_study_id,
                 entity_name,
-                variable_key,
             )
 
 
             raise WatermarkReadError(
                 (
-                    "Unable to read watermark "
+                    "Unable to read Snowflake watermark "
                     f"study_id={clean_study_id} "
                     f"entity={entity_name}"
                 )
             ) from exc
 
 
+        finally:
+
+            if conn is not None:
+
+                conn.close()
+
+
         # ====================================================
         # FIRST RUN
         # ====================================================
 
-        if value is None:
+        if not rows:
 
             logger.info(
                 (
                     "study_id=%s "
                     "entity=%s "
                     "watermark_not_found "
-                    "load_type=FULL"
+                    "load_type=FULL "
+                    "source=SNOWFLAKE"
                 ),
                 clean_study_id,
                 entity_name,
@@ -442,6 +558,38 @@ class WatermarkManager:
 
 
         # ====================================================
+        # DEFENSIVE DUPLICATE CHECK
+        # ====================================================
+
+        if len(
+            rows
+        ) > 1:
+
+            logger.error(
+                (
+                    "study_id=%s "
+                    "entity=%s "
+                    "duplicate_watermark_rows_detected"
+                ),
+                clean_study_id,
+                entity_name,
+            )
+
+
+            raise WatermarkReadError(
+                (
+                    "Multiple Snowflake watermark rows "
+                    "exist for the same study/entity "
+                    f"study_id={clean_study_id} "
+                    f"entity={entity_name}"
+                )
+            )
+
+
+        value = rows[0][0]
+
+
+        # ====================================================
         # VALIDATE STORED VALUE
         # ====================================================
 
@@ -449,7 +597,7 @@ class WatermarkManager:
 
             normalized = (
                 _normalize_timestamp(
-                    str(value)
+                    value
                 )
             )
 
@@ -474,7 +622,7 @@ class WatermarkManager:
 
             raise WatermarkReadError(
                 (
-                    "Stored watermark is invalid "
+                    "Stored Snowflake watermark is invalid "
                     f"study_id={clean_study_id} "
                     f"entity={entity_name} "
                     f"value={value}"
@@ -488,7 +636,8 @@ class WatermarkManager:
                 "entity=%s "
                 "watermark_read_completed "
                 "watermark=%s "
-                "load_type=INCREMENTAL"
+                "load_type=INCREMENTAL "
+                "source=SNOWFLAKE"
             ),
             clean_study_id,
             entity_name,
@@ -515,7 +664,7 @@ class WatermarkManager:
         Return watermark to send to the source API.
 
         A small overlap is subtracted from the stored
-        watermark.
+        Snowflake watermark.
 
         Example:
 
@@ -548,10 +697,6 @@ class WatermarkManager:
             )
         )
 
-
-        # ====================================================
-        # FIRST RUN
-        # ====================================================
 
         if stored_watermark is None:
 
@@ -600,7 +745,8 @@ class WatermarkManager:
                 "extraction_watermark_calculated "
                 "stored_watermark=%s "
                 "extraction_watermark=%s "
-                "overlap_seconds=%s"
+                "overlap_seconds=%s "
+                "source=SNOWFLAKE"
             ),
             study_id,
             entity_name,
@@ -622,9 +768,10 @@ class WatermarkManager:
         study_id: str,
         entity_name: str,
         new_watermark: str,
+        run_id: str | None = None,
     ) -> str:
         """
-        Persist a new successful watermark.
+        Persist a new successful watermark in Snowflake.
 
         IMPORTANT:
 
@@ -638,6 +785,9 @@ class WatermarkManager:
             S3 verification
 
         have all completed successfully.
+
+        The watermark can move forward or remain unchanged.
+        It can never move backwards.
         """
 
         clean_study_id = (
@@ -651,18 +801,6 @@ class WatermarkManager:
             entity_name
         )
 
-
-        variable_key = (
-            _build_variable_key(
-                clean_study_id,
-                entity_name,
-            )
-        )
-
-
-        # ====================================================
-        # VALIDATE NEW WATERMARK
-        # ====================================================
 
         try:
 
@@ -695,125 +833,274 @@ class WatermarkManager:
             ) from exc
 
 
-        # ====================================================
-        # READ CURRENT WATERMARK
-        # ====================================================
+        conn = None
 
-        current_watermark = (
-            self.get_watermark(
-                study_id=clean_study_id,
-                entity_name=entity_name,
-            )
-        )
-
-
-        # ====================================================
-        # PREVENT WATERMARK GOING BACKWARDS
-        # ====================================================
-
-        if current_watermark:
-
-            current_datetime = (
-                _parse_timestamp(
-                    current_watermark
-                )
-            )
-
-
-            if new_datetime < current_datetime:
-
-                logger.error(
-                    (
-                        "study_id=%s "
-                        "entity=%s "
-                        "watermark_regression_detected "
-                        "current=%s "
-                        "new=%s"
-                    ),
-                    clean_study_id,
-                    entity_name,
-                    current_watermark,
-                    normalized_new,
-                )
-
-
-                raise WatermarkUpdateError(
-                    (
-                        "Watermark cannot move backwards. "
-                        f"current={current_watermark}, "
-                        f"new={normalized_new}"
-                    )
-                )
-
-
-            # ------------------------------------------------
-            # SAME WATERMARK
-            # ------------------------------------------------
-
-            if new_datetime == current_datetime:
-
-                logger.info(
-                    (
-                        "study_id=%s "
-                        "entity=%s "
-                        "watermark_unchanged "
-                        "watermark=%s"
-                    ),
-                    clean_study_id,
-                    entity_name,
-                    current_watermark,
-                )
-
-
-                return current_watermark
-
-
-        # ====================================================
-        # WRITE WATERMARK
-        # ====================================================
 
         try:
 
-            Variable = (
-                _get_airflow_variable_class()
-            )
+            conn = self._connect()
 
 
-            Variable.set(
-                key=variable_key,
-                value=normalized_new,
-                description=(
-                    "ACT incremental watermark "
-                    f"for study={clean_study_id}, "
-                    f"entity={entity_name}"
-                ),
-            )
+            with conn.cursor() as cur:
+
+                # ============================================
+                # READ CURRENT VALUE IN THE SAME TRANSACTION
+                # ============================================
+
+                cur.execute(
+                    f"""
+                    SELECT
+                        WATERMARK_VALUE
+                    FROM {WATERMARK_TABLE}
+                    WHERE STUDY_ID = %s
+                      AND ENTITY_NAME = %s
+                    ORDER BY UPDATED_AT DESC
+                    LIMIT 2
+                    """,
+                    (
+                        clean_study_id,
+                        entity_name,
+                    ),
+                )
+
+
+                rows = cur.fetchall()
+
+
+                if len(
+                    rows
+                ) > 1:
+
+                    raise WatermarkUpdateError(
+                        (
+                            "Multiple Snowflake watermark rows "
+                            "exist for the same study/entity "
+                            f"study_id={clean_study_id} "
+                            f"entity={entity_name}"
+                        )
+                    )
+
+
+                current_watermark = None
+
+
+                if rows:
+
+                    current_watermark = (
+                        _normalize_timestamp(
+                            rows[0][0]
+                        )
+                    )
+
+
+                    current_datetime = (
+                        _parse_timestamp(
+                            current_watermark
+                        )
+                    )
+
+
+                    # ========================================
+                    # PREVENT WATERMARK REGRESSION
+                    # ========================================
+
+                    if new_datetime < current_datetime:
+
+                        logger.error(
+                            (
+                                "study_id=%s "
+                                "entity=%s "
+                                "watermark_regression_detected "
+                                "current=%s "
+                                "new=%s"
+                            ),
+                            clean_study_id,
+                            entity_name,
+                            current_watermark,
+                            normalized_new,
+                        )
+
+
+                        raise WatermarkUpdateError(
+                            (
+                                "Watermark cannot move backwards. "
+                                f"current={current_watermark}, "
+                                f"new={normalized_new}"
+                            )
+                        )
+
+
+                    # ========================================
+                    # SAME WATERMARK
+                    # ========================================
+
+                    if new_datetime == current_datetime:
+
+                        # ------------------------------------
+                        # Watermark value is unchanged, but a
+                        # successful run can still refresh the
+                        # operational run metadata.
+                        # ------------------------------------
+
+                        if run_id:
+
+                            cur.execute(
+                                f"""
+                                UPDATE {WATERMARK_TABLE}
+                                SET
+                                    LAST_SUCCESSFUL_RUN_ID = %s,
+                                    UPDATED_AT =
+                                        CURRENT_TIMESTAMP()
+                                WHERE STUDY_ID = %s
+                                  AND ENTITY_NAME = %s
+                                """,
+                                (
+                                    run_id,
+                                    clean_study_id,
+                                    entity_name,
+                                ),
+                            )
+
+
+                        conn.commit()
+
+
+                        logger.info(
+                            (
+                                "study_id=%s "
+                                "entity=%s "
+                                "watermark_unchanged "
+                                "watermark=%s "
+                                "run_id=%s "
+                                "source=SNOWFLAKE"
+                            ),
+                            clean_study_id,
+                            entity_name,
+                            current_watermark,
+                            run_id,
+                        )
+
+
+                        return current_watermark
+
+
+                # ============================================
+                # MERGE WATERMARK
+                # ============================================
+
+                cur.execute(
+                    f"""
+                    MERGE INTO {WATERMARK_TABLE} AS T
+                    USING
+                    (
+                        SELECT
+                            %s::VARCHAR AS STUDY_ID,
+                            %s::VARCHAR AS ENTITY_NAME,
+                            %s::TIMESTAMP_TZ AS WATERMARK_VALUE,
+                            %s::VARCHAR AS LAST_SUCCESSFUL_RUN_ID
+                    ) AS S
+
+                    ON  T.STUDY_ID = S.STUDY_ID
+                    AND T.ENTITY_NAME = S.ENTITY_NAME
+
+                    WHEN MATCHED
+                         AND S.WATERMARK_VALUE
+                             >= T.WATERMARK_VALUE
+                    THEN UPDATE SET
+                        T.WATERMARK_VALUE =
+                            S.WATERMARK_VALUE,
+
+                        T.LAST_SUCCESSFUL_RUN_ID =
+                            COALESCE(
+                                S.LAST_SUCCESSFUL_RUN_ID,
+                                T.LAST_SUCCESSFUL_RUN_ID
+                            ),
+
+                        T.UPDATED_AT =
+                            CURRENT_TIMESTAMP()
+
+                    WHEN NOT MATCHED THEN
+                    INSERT
+                    (
+                        STUDY_ID,
+                        ENTITY_NAME,
+                        WATERMARK_VALUE,
+                        LAST_SUCCESSFUL_RUN_ID,
+                        CREATED_AT,
+                        UPDATED_AT
+                    )
+                    VALUES
+                    (
+                        S.STUDY_ID,
+                        S.ENTITY_NAME,
+                        S.WATERMARK_VALUE,
+                        S.LAST_SUCCESSFUL_RUN_ID,
+                        CURRENT_TIMESTAMP(),
+                        CURRENT_TIMESTAMP()
+                    )
+                    """,
+                    (
+                        clean_study_id,
+                        entity_name,
+                        normalized_new,
+                        run_id,
+                    ),
+                )
+
+
+            conn.commit()
+
+
+        except WatermarkUpdateError:
+
+            if conn is not None:
+
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            raise
 
 
         except Exception as exc:
+
+            if conn is not None:
+
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
 
             logger.exception(
                 (
                     "study_id=%s "
                     "entity=%s "
                     "watermark_update_failed "
-                    "variable_key=%s "
+                    "source=SNOWFLAKE "
                     "new_watermark=%s"
                 ),
                 clean_study_id,
                 entity_name,
-                variable_key,
                 normalized_new,
             )
 
 
             raise WatermarkUpdateError(
                 (
-                    "Unable to update watermark "
+                    "Unable to update Snowflake watermark "
                     f"study_id={clean_study_id} "
                     f"entity={entity_name}"
                 )
             ) from exc
+
+
+        finally:
+
+            if conn is not None:
+
+                conn.close()
 
 
         logger.info(
@@ -822,12 +1109,15 @@ class WatermarkManager:
                 "entity=%s "
                 "watermark_update_completed "
                 "old_watermark=%s "
-                "new_watermark=%s"
+                "new_watermark=%s "
+                "run_id=%s "
+                "source=SNOWFLAKE"
             ),
             clean_study_id,
             entity_name,
             current_watermark,
             normalized_new,
+            run_id,
         )
 
 
@@ -848,6 +1138,11 @@ class WatermarkManager:
     ) -> WatermarkState:
         """
         Return complete watermark state.
+
+        Snowflake is the source of truth.
+
+        variable_key is returned only to preserve the existing
+        WatermarkState interface.
         """
 
         clean_study_id = (
@@ -878,13 +1173,34 @@ class WatermarkManager:
         )
 
 
-        extraction_watermark = (
-            self.get_extraction_watermark(
-                study_id=clean_study_id,
-                entity_name=entity_name,
-                overlap_seconds=overlap_seconds,
+        if stored_watermark is None:
+
+            extraction_watermark = None
+
+
+        else:
+
+            if overlap_seconds < 0:
+
+                raise ConfigurationError(
+                    (
+                        "overlap_seconds cannot "
+                        "be negative"
+                    )
+                )
+
+
+            extraction_watermark = (
+                (
+                    _parse_timestamp(
+                        stored_watermark
+                    )
+                    - timedelta(
+                        seconds=overlap_seconds
+                    )
+                )
+                .isoformat()
             )
-        )
 
 
         return WatermarkState(
@@ -919,12 +1235,14 @@ class WatermarkManager:
         entity_name: str,
     ) -> None:
         """
-        Delete watermark.
+        Delete the Snowflake watermark.
 
         Mainly useful during development/testing.
 
-        Deleting the watermark causes the next load
-        to behave as an initial FULL load.
+        Deleting the row causes the next load to behave
+        as an initial FULL load.
+
+        This does NOT touch legacy Airflow Variables.
         """
 
         clean_study_id = (
@@ -939,48 +1257,68 @@ class WatermarkManager:
         )
 
 
-        variable_key = (
-            _build_variable_key(
-                clean_study_id,
-                entity_name,
-            )
-        )
+        conn = None
 
 
         try:
 
-            Variable = (
-                _get_airflow_variable_class()
-            )
+            conn = self._connect()
 
 
-            Variable.delete(
-                variable_key
-            )
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    f"""
+                    DELETE FROM {WATERMARK_TABLE}
+                    WHERE STUDY_ID = %s
+                      AND ENTITY_NAME = %s
+                    """,
+                    (
+                        clean_study_id,
+                        entity_name,
+                    ),
+                )
+
+
+            conn.commit()
 
 
         except Exception as exc:
+
+            if conn is not None:
+
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
 
             logger.exception(
                 (
                     "study_id=%s "
                     "entity=%s "
                     "watermark_delete_failed "
-                    "variable_key=%s"
+                    "source=SNOWFLAKE"
                 ),
                 clean_study_id,
                 entity_name,
-                variable_key,
             )
 
 
             raise WatermarkUpdateError(
                 (
-                    "Unable to delete watermark "
+                    "Unable to delete Snowflake watermark "
                     f"study_id={clean_study_id} "
                     f"entity={entity_name}"
                 )
             ) from exc
+
+
+        finally:
+
+            if conn is not None:
+
+                conn.close()
 
 
         logger.info(
@@ -988,9 +1326,8 @@ class WatermarkManager:
                 "study_id=%s "
                 "entity=%s "
                 "watermark_deleted "
-                "variable_key=%s"
+                "source=SNOWFLAKE"
             ),
             clean_study_id,
             entity_name,
-            variable_key,
         )

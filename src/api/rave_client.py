@@ -6,9 +6,11 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any
 
 import requests
+from dotenv import load_dotenv
 
 from config.endpoints import (
     ENDPOINTS,
@@ -63,14 +65,62 @@ class APIResponse:
 # ============================================================
 # CONFIGURATION
 # ============================================================
+#
+# Airflow task processes must be able to resolve the project
+# configuration even when the shell that launches the task does
+# not expose the repository .env file.
+#
+# Environment variables still take precedence because
+# override=False.
+# ============================================================
 
-RAVE_API_BASE_URL = os.getenv(
-    "RAVE_API_BASE_URL"
+PROJECT_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parents[2]
 )
 
-RAVE_CODESPACE_TOKEN = os.getenv(
-    "RAVE_CODESPACE_TOKEN"
+ENV_FILE = (
+    PROJECT_ROOT
+    / ".env"
 )
+
+load_dotenv(
+    dotenv_path=ENV_FILE,
+    override=False,
+)
+
+
+def _get_rave_api_base_url() -> str | None:
+    """
+    Resolve the Rave API base URL at runtime.
+
+    Runtime lookup avoids keeping a stale import-time value.
+    """
+
+    value = os.getenv(
+        "RAVE_API_BASE_URL"
+    )
+
+    if value:
+        return value.strip()
+
+    return None
+
+
+def _get_rave_codespace_token() -> str | None:
+    """
+    Resolve the optional GitHub Codespaces token at runtime.
+    """
+
+    value = os.getenv(
+        "RAVE_CODESPACE_TOKEN"
+    )
+
+    if value:
+        return value.strip()
+
+    return None
 
 
 # ============================================================
@@ -82,10 +132,17 @@ def _validate_configuration() -> None:
     Validate required API configuration.
     """
 
-    if not RAVE_API_BASE_URL:
+    rave_api_base_url = (
+        _get_rave_api_base_url()
+    )
+
+    if not rave_api_base_url:
 
         raise ConfigurationError(
-            "RAVE_API_BASE_URL environment variable is missing"
+            (
+                "RAVE_API_BASE_URL is missing. "
+                f"Checked environment and {ENV_FILE}"
+            )
         )
 
 
@@ -231,11 +288,36 @@ class RaveAPIClient:
 
         _validate_configuration()
 
+        rave_api_base_url = (
+            _get_rave_api_base_url()
+        )
+
+        if not rave_api_base_url:
+            raise ConfigurationError(
+                "RAVE_API_BASE_URL could not be resolved"
+            )
+
         self.base_url = (
-            RAVE_API_BASE_URL.rstrip("/")
+            rave_api_base_url.rstrip("/")
+        )
+
+        rave_codespace_token = (
+            _get_rave_codespace_token()
         )
 
         self.session = requests.Session()
+
+        logger.info(
+            (
+                "Rave API client configuration resolved "
+                "base_url=%s "
+                "env_file=%s "
+                "codespace_token_configured=%s"
+            ),
+            self.base_url,
+            ENV_FILE,
+            bool(rave_codespace_token),
+        )
 
         # ----------------------------------------------------
         # Default headers
@@ -260,12 +342,12 @@ class RaveAPIClient:
         # If it is Private, GitHub uses this header.
         # ----------------------------------------------------
 
-        if RAVE_CODESPACE_TOKEN:
+        if rave_codespace_token:
 
             self.session.headers.update(
                 {
                     "X-Github-Token":
-                        RAVE_CODESPACE_TOKEN
+                        rave_codespace_token
                 }
             )
 

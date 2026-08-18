@@ -1,0 +1,441 @@
+-- ============================================================================
+-- ACT Data Platform - Adverse Event Option 3 Migration
+-- File: snowflake/sql/009_prepare_adverse_event_option3.sql
+--
+-- Purpose:
+--   Convert the existing adverse-event RAW design into:
+--
+--       S3
+--        |
+--        v
+--   LND_ADVERSE_EVENT
+--        |
+--        +--> RAW_ADVERSE_EVENT_HISTORY   (version history)
+--        |
+--        +--> RAW_ADVERSE_EVENT_CURRENT   (latest/current state)
+--
+-- IMPORTANT:
+--   - This script DOES NOT drop RAW_ADVERSE_EVENT.
+--   - The existing table is kept untouched as a safety/rollback copy.
+--   - Existing rows are migrated into HISTORY and CURRENT.
+--   - RECORD_HASH detects content changes even when UPDATED_AT does not change.
+--   - Re-running this script is designed to be safe.
+-- ============================================================================
+
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE COMPUTE_WH;
+USE DATABASE ACT_DB;
+USE SCHEMA RAW;
+
+CREATE TRANSIENT TABLE IF NOT EXISTS LND_ADVERSE_EVENT
+(
+    LND_ROW_ID                 NUMBER AUTOINCREMENT START 1 INCREMENT 1,
+
+    AE_ID                      VARCHAR,
+    STUDY_ID                   VARCHAR,
+    SUBJECT_ID                 VARCHAR,
+    EVENT_TERM                 VARCHAR,
+    SEVERITY                   VARCHAR,
+    SERIOUS                    VARCHAR,
+    EVENT_DATE                 DATE,
+    REPORTED_DATE              DATE,
+    PROCESSING_PRIORITY        VARCHAR,
+    REQUIRES_SAFETY_REVIEW     BOOLEAN,
+    UPDATED_AT                 TIMESTAMP_TZ,
+
+    SOURCE_SYSTEM              VARCHAR,
+    SOURCE_ENTITY              VARCHAR,
+    DAG_RUN_ID                 VARCHAR,
+    INGESTED_AT                TIMESTAMP_TZ,
+
+    SOURCE_FILE_NAME           VARCHAR,
+    SOURCE_FILE_ROW_NUMBER     NUMBER,
+    SOURCE_FILE_CONTENT_KEY    VARCHAR,
+    SOURCE_FILE_LAST_MODIFIED  TIMESTAMP_TZ,
+    SNOWFLAKE_LOAD_TS          TIMESTAMP_LTZ,
+
+    RECORD_HASH                VARCHAR(64),
+
+    PROCESSED_FLAG             BOOLEAN DEFAULT FALSE,
+    PROCESSED_AT               TIMESTAMP_LTZ
+)
+COMMENT = 'Transient landing table for newly copied adverse-event S3 rows';
+
+CREATE TABLE IF NOT EXISTS RAW_ADVERSE_EVENT_HISTORY
+(
+    AE_ID                      VARCHAR,
+    STUDY_ID                   VARCHAR,
+    SUBJECT_ID                 VARCHAR,
+    EVENT_TERM                 VARCHAR,
+    SEVERITY                   VARCHAR,
+    SERIOUS                    VARCHAR,
+    EVENT_DATE                 DATE,
+    REPORTED_DATE              DATE,
+    PROCESSING_PRIORITY        VARCHAR,
+    REQUIRES_SAFETY_REVIEW     BOOLEAN,
+    UPDATED_AT                 TIMESTAMP_TZ,
+
+    RECORD_HASH                VARCHAR(64),
+
+    SOURCE_SYSTEM              VARCHAR,
+    SOURCE_ENTITY              VARCHAR,
+    DAG_RUN_ID                 VARCHAR,
+    INGESTED_AT                TIMESTAMP_TZ,
+
+    SOURCE_FILE_NAME           VARCHAR,
+    SOURCE_FILE_ROW_NUMBER     NUMBER,
+    SOURCE_FILE_CONTENT_KEY    VARCHAR,
+    SOURCE_FILE_LAST_MODIFIED  TIMESTAMP_TZ,
+    SNOWFLAKE_LOAD_TS          TIMESTAMP_LTZ,
+
+    HISTORY_CREATED_AT         TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Adverse-event source version history; unchanged overlap replays are suppressed';
+
+CREATE TABLE IF NOT EXISTS RAW_ADVERSE_EVENT_CURRENT
+(
+    AE_ID                      VARCHAR,
+    STUDY_ID                   VARCHAR,
+    SUBJECT_ID                 VARCHAR,
+    EVENT_TERM                 VARCHAR,
+    SEVERITY                   VARCHAR,
+    SERIOUS                    VARCHAR,
+    EVENT_DATE                 DATE,
+    REPORTED_DATE              DATE,
+    PROCESSING_PRIORITY        VARCHAR,
+    REQUIRES_SAFETY_REVIEW     BOOLEAN,
+    UPDATED_AT                 TIMESTAMP_TZ,
+
+    RECORD_HASH                VARCHAR(64),
+
+    SOURCE_SYSTEM              VARCHAR,
+    SOURCE_ENTITY              VARCHAR,
+    DAG_RUN_ID                 VARCHAR,
+    INGESTED_AT                TIMESTAMP_TZ,
+
+    SOURCE_FILE_NAME           VARCHAR,
+    SOURCE_FILE_ROW_NUMBER     NUMBER,
+    SOURCE_FILE_CONTENT_KEY    VARCHAR,
+    SOURCE_FILE_LAST_MODIFIED  TIMESTAMP_TZ,
+    SNOWFLAKE_LOAD_TS          TIMESTAMP_LTZ,
+
+    CURRENT_ROW_UPDATED_AT     TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Current/latest adverse-event state, one row per study and AE identifier';
+
+MERGE INTO RAW_ADVERSE_EVENT_HISTORY AS T
+USING
+(
+    SELECT
+        AE_ID,
+        STUDY_ID,
+        SUBJECT_ID,
+        EVENT_TERM,
+        SEVERITY,
+        SERIOUS,
+        EVENT_DATE,
+        REPORTED_DATE,
+        PROCESSING_PRIORITY,
+        REQUIRES_SAFETY_REVIEW,
+        UPDATED_AT,
+
+        SHA2(
+            CONCAT_WS(
+                '||',
+                COALESCE(SUBJECT_ID, '<NULL>'),
+                COALESCE(EVENT_TERM, '<NULL>'),
+                COALESCE(SEVERITY, '<NULL>'),
+                COALESCE(SERIOUS, '<NULL>'),
+                COALESCE(TO_VARCHAR(EVENT_DATE, 'YYYY-MM-DD'), '<NULL>'),
+                COALESCE(TO_VARCHAR(REPORTED_DATE, 'YYYY-MM-DD'), '<NULL>'),
+                COALESCE(PROCESSING_PRIORITY, '<NULL>'),
+                COALESCE(TO_VARCHAR(REQUIRES_SAFETY_REVIEW), '<NULL>')
+            ),
+            256
+        ) AS RECORD_HASH,
+
+        SOURCE_SYSTEM,
+        SOURCE_ENTITY,
+        DAG_RUN_ID,
+        INGESTED_AT,
+        SOURCE_FILE_NAME,
+        SOURCE_FILE_ROW_NUMBER,
+        SOURCE_FILE_CONTENT_KEY,
+        SOURCE_FILE_LAST_MODIFIED,
+        SNOWFLAKE_LOAD_TS
+
+    FROM RAW_ADVERSE_EVENT
+
+    QUALIFY ROW_NUMBER() OVER
+    (
+        PARTITION BY
+            STUDY_ID,
+            AE_ID,
+            UPDATED_AT,
+            SHA2(
+                CONCAT_WS(
+                    '||',
+                    COALESCE(SUBJECT_ID, '<NULL>'),
+                    COALESCE(EVENT_TERM, '<NULL>'),
+                    COALESCE(SEVERITY, '<NULL>'),
+                    COALESCE(SERIOUS, '<NULL>'),
+                    COALESCE(TO_VARCHAR(EVENT_DATE, 'YYYY-MM-DD'), '<NULL>'),
+                    COALESCE(TO_VARCHAR(REPORTED_DATE, 'YYYY-MM-DD'), '<NULL>'),
+                    COALESCE(PROCESSING_PRIORITY, '<NULL>'),
+                    COALESCE(TO_VARCHAR(REQUIRES_SAFETY_REVIEW), '<NULL>')
+                ),
+                256
+            )
+        ORDER BY
+            INGESTED_AT DESC NULLS LAST,
+            SNOWFLAKE_LOAD_TS DESC NULLS LAST,
+            SOURCE_FILE_LAST_MODIFIED DESC NULLS LAST,
+            SOURCE_FILE_NAME DESC,
+            SOURCE_FILE_ROW_NUMBER DESC
+    ) = 1
+) AS S
+
+ON  T.STUDY_ID = S.STUDY_ID
+AND T.AE_ID = S.AE_ID
+AND T.UPDATED_AT = S.UPDATED_AT
+AND T.RECORD_HASH = S.RECORD_HASH
+
+WHEN NOT MATCHED THEN
+INSERT
+(
+    AE_ID,
+    STUDY_ID,
+    SUBJECT_ID,
+    EVENT_TERM,
+    SEVERITY,
+    SERIOUS,
+    EVENT_DATE,
+    REPORTED_DATE,
+    PROCESSING_PRIORITY,
+    REQUIRES_SAFETY_REVIEW,
+    UPDATED_AT,
+    RECORD_HASH,
+    SOURCE_SYSTEM,
+    SOURCE_ENTITY,
+    DAG_RUN_ID,
+    INGESTED_AT,
+    SOURCE_FILE_NAME,
+    SOURCE_FILE_ROW_NUMBER,
+    SOURCE_FILE_CONTENT_KEY,
+    SOURCE_FILE_LAST_MODIFIED,
+    SNOWFLAKE_LOAD_TS
+)
+VALUES
+(
+    S.AE_ID,
+    S.STUDY_ID,
+    S.SUBJECT_ID,
+    S.EVENT_TERM,
+    S.SEVERITY,
+    S.SERIOUS,
+    S.EVENT_DATE,
+    S.REPORTED_DATE,
+    S.PROCESSING_PRIORITY,
+    S.REQUIRES_SAFETY_REVIEW,
+    S.UPDATED_AT,
+    S.RECORD_HASH,
+    S.SOURCE_SYSTEM,
+    S.SOURCE_ENTITY,
+    S.DAG_RUN_ID,
+    S.INGESTED_AT,
+    S.SOURCE_FILE_NAME,
+    S.SOURCE_FILE_ROW_NUMBER,
+    S.SOURCE_FILE_CONTENT_KEY,
+    S.SOURCE_FILE_LAST_MODIFIED,
+    S.SNOWFLAKE_LOAD_TS
+);
+
+MERGE INTO RAW_ADVERSE_EVENT_CURRENT AS T
+USING
+(
+    SELECT
+        AE_ID,
+        STUDY_ID,
+        SUBJECT_ID,
+        EVENT_TERM,
+        SEVERITY,
+        SERIOUS,
+        EVENT_DATE,
+        REPORTED_DATE,
+        PROCESSING_PRIORITY,
+        REQUIRES_SAFETY_REVIEW,
+        UPDATED_AT,
+        RECORD_HASH,
+        SOURCE_SYSTEM,
+        SOURCE_ENTITY,
+        DAG_RUN_ID,
+        INGESTED_AT,
+        SOURCE_FILE_NAME,
+        SOURCE_FILE_ROW_NUMBER,
+        SOURCE_FILE_CONTENT_KEY,
+        SOURCE_FILE_LAST_MODIFIED,
+        SNOWFLAKE_LOAD_TS
+
+    FROM RAW_ADVERSE_EVENT_HISTORY
+
+    QUALIFY ROW_NUMBER() OVER
+    (
+        PARTITION BY STUDY_ID, AE_ID
+        ORDER BY
+            INGESTED_AT DESC NULLS LAST,
+            SNOWFLAKE_LOAD_TS DESC NULLS LAST,
+            SOURCE_FILE_LAST_MODIFIED DESC NULLS LAST,
+            UPDATED_AT DESC NULLS LAST,
+            SOURCE_FILE_NAME DESC,
+            SOURCE_FILE_ROW_NUMBER DESC
+    ) = 1
+) AS S
+
+ON  T.STUDY_ID = S.STUDY_ID
+AND T.AE_ID = S.AE_ID
+
+WHEN MATCHED
+AND
+(
+       T.RECORD_HASH <> S.RECORD_HASH
+    OR T.UPDATED_AT <> S.UPDATED_AT
+    OR T.DAG_RUN_ID <> S.DAG_RUN_ID
+)
+THEN UPDATE SET
+    T.SUBJECT_ID = S.SUBJECT_ID,
+    T.EVENT_TERM = S.EVENT_TERM,
+    T.SEVERITY = S.SEVERITY,
+    T.SERIOUS = S.SERIOUS,
+    T.EVENT_DATE = S.EVENT_DATE,
+    T.REPORTED_DATE = S.REPORTED_DATE,
+    T.PROCESSING_PRIORITY = S.PROCESSING_PRIORITY,
+    T.REQUIRES_SAFETY_REVIEW = S.REQUIRES_SAFETY_REVIEW,
+    T.UPDATED_AT = S.UPDATED_AT,
+    T.RECORD_HASH = S.RECORD_HASH,
+    T.SOURCE_SYSTEM = S.SOURCE_SYSTEM,
+    T.SOURCE_ENTITY = S.SOURCE_ENTITY,
+    T.DAG_RUN_ID = S.DAG_RUN_ID,
+    T.INGESTED_AT = S.INGESTED_AT,
+    T.SOURCE_FILE_NAME = S.SOURCE_FILE_NAME,
+    T.SOURCE_FILE_ROW_NUMBER = S.SOURCE_FILE_ROW_NUMBER,
+    T.SOURCE_FILE_CONTENT_KEY = S.SOURCE_FILE_CONTENT_KEY,
+    T.SOURCE_FILE_LAST_MODIFIED = S.SOURCE_FILE_LAST_MODIFIED,
+    T.SNOWFLAKE_LOAD_TS = S.SNOWFLAKE_LOAD_TS,
+    T.CURRENT_ROW_UPDATED_AT = CURRENT_TIMESTAMP()
+
+WHEN NOT MATCHED THEN
+INSERT
+(
+    AE_ID,
+    STUDY_ID,
+    SUBJECT_ID,
+    EVENT_TERM,
+    SEVERITY,
+    SERIOUS,
+    EVENT_DATE,
+    REPORTED_DATE,
+    PROCESSING_PRIORITY,
+    REQUIRES_SAFETY_REVIEW,
+    UPDATED_AT,
+    RECORD_HASH,
+    SOURCE_SYSTEM,
+    SOURCE_ENTITY,
+    DAG_RUN_ID,
+    INGESTED_AT,
+    SOURCE_FILE_NAME,
+    SOURCE_FILE_ROW_NUMBER,
+    SOURCE_FILE_CONTENT_KEY,
+    SOURCE_FILE_LAST_MODIFIED,
+    SNOWFLAKE_LOAD_TS,
+    CURRENT_ROW_UPDATED_AT
+)
+VALUES
+(
+    S.AE_ID,
+    S.STUDY_ID,
+    S.SUBJECT_ID,
+    S.EVENT_TERM,
+    S.SEVERITY,
+    S.SERIOUS,
+    S.EVENT_DATE,
+    S.REPORTED_DATE,
+    S.PROCESSING_PRIORITY,
+    S.REQUIRES_SAFETY_REVIEW,
+    S.UPDATED_AT,
+    S.RECORD_HASH,
+    S.SOURCE_SYSTEM,
+    S.SOURCE_ENTITY,
+    S.DAG_RUN_ID,
+    S.INGESTED_AT,
+    S.SOURCE_FILE_NAME,
+    S.SOURCE_FILE_ROW_NUMBER,
+    S.SOURCE_FILE_CONTENT_KEY,
+    S.SOURCE_FILE_LAST_MODIFIED,
+    S.SNOWFLAKE_LOAD_TS,
+    CURRENT_TIMESTAMP()
+);
+
+SELECT
+    'LEGACY_RAW' AS TABLE_NAME,
+    COUNT(*) AS ROW_COUNT
+FROM RAW_ADVERSE_EVENT
+
+UNION ALL
+
+SELECT
+    'HISTORY',
+    COUNT(*)
+FROM RAW_ADVERSE_EVENT_HISTORY
+
+UNION ALL
+
+SELECT
+    'CURRENT',
+    COUNT(*)
+FROM RAW_ADVERSE_EVENT_CURRENT
+
+UNION ALL
+
+SELECT
+    'LANDING',
+    COUNT(*)
+FROM LND_ADVERSE_EVENT
+;
+
+SELECT
+    STUDY_ID,
+    AE_ID,
+    COUNT(*) AS CURRENT_ROW_COUNT
+FROM RAW_ADVERSE_EVENT_CURRENT
+GROUP BY
+    STUDY_ID,
+    AE_ID
+HAVING COUNT(*) > 1;
+
+SELECT
+    STUDY_ID,
+    AE_ID,
+    EVENT_TERM,
+    SEVERITY,
+    UPDATED_AT,
+    RECORD_HASH,
+    DAG_RUN_ID,
+    INGESTED_AT,
+    CURRENT_ROW_UPDATED_AT
+FROM RAW_ADVERSE_EVENT_CURRENT
+ORDER BY
+    STUDY_ID,
+    AE_ID;
+
+SELECT
+    STUDY_ID,
+    AE_ID,
+    COUNT(*) AS VERSION_COUNT
+FROM RAW_ADVERSE_EVENT_HISTORY
+GROUP BY
+    STUDY_ID,
+    AE_ID
+HAVING COUNT(*) > 1
+ORDER BY
+    STUDY_ID,
+    AE_ID;

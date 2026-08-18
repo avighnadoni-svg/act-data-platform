@@ -56,6 +56,19 @@ MAX_DISCOVERY_PAGES = 1000
 @dag(
     dag_id=DAG_ID,
 
+    # ========================================================
+    # DEVELOPMENT MODE
+    #
+    # Keep manual while the complete platform is still being
+    # developed and validated.
+    #
+    # Final production cadence can later be changed to:
+    #
+    #     0 */6 * * *
+    #
+    # for four runs per day.
+    # ========================================================
+
     schedule=None,
 
     start_date=pendulum.datetime(
@@ -76,16 +89,135 @@ MAX_DISCOVERY_PAGES = 1000
         "Clinical",
         "Rave",
         "S3",
+        "Snowflake-Control",
+        "Snowflake-RAW",
         "Incremental",
         "Multi-Study",
     ],
 
     description=(
         "Multi-study ACT clinical ingestion "
-        "from Rave API to AWS S3"
+        "from Rave API to AWS S3 and Snowflake RAW "
+        "with Snowflake watermark and CONTROL auditing"
     ),
 )
 def act_rave_ingestion():
+
+
+    # ========================================================
+    # TASK 0
+    # START PIPELINE RUN AUDIT
+    # ========================================================
+
+    @task(
+        task_id="start_pipeline_audit",
+
+        # ----------------------------------------------------
+        # Do not retry this INSERT-style start operation.
+        #
+        # This prevents duplicate parent audit rows for the
+        # same Airflow DAG run.
+        # ----------------------------------------------------
+
+        retries=0,
+
+        execution_timeout=timedelta(
+            minutes=5
+        ),
+    )
+    def start_pipeline_audit() -> str:
+        """
+        Create one PIPELINE_RUN_AUDIT row for this
+        Airflow DAG run.
+
+        The row starts as:
+
+            STATUS = RUNNING
+
+        and is completed by finish_pipeline_audit.
+        """
+
+        from src.snowflake.control_audit import (
+            ControlAuditClient,
+        )
+
+
+        context = (
+            get_current_context()
+        )
+
+
+        ti = context[
+            "ti"
+        ]
+
+
+        run_id = ti.run_id
+
+
+        # ====================================================
+        # RUN TYPE
+        # ====================================================
+
+        if run_id.startswith(
+            "manual__"
+        ):
+
+            run_type = "MANUAL"
+
+
+        elif run_id.startswith(
+            "scheduled__"
+        ):
+
+            run_type = "SCHEDULED"
+
+
+        else:
+
+            run_type = "OTHER"
+
+
+        control_audit_client = (
+            ControlAuditClient()
+        )
+
+
+        pipeline_audit_id = (
+            control_audit_client
+            .start_pipeline_run(
+
+                dag_id=
+                    ti.dag_id,
+
+                dag_run_id=
+                    run_id,
+
+                run_type=
+                    run_type,
+
+                triggered_by=
+                    "AIRFLOW",
+            )
+        )
+
+
+        logger.info(
+            (
+                "pipeline_audit_started "
+                "pipeline_audit_id=%s "
+                "dag_id=%s "
+                "dag_run_id=%s "
+                "run_type=%s"
+            ),
+            pipeline_audit_id,
+            ti.dag_id,
+            run_id,
+            run_type,
+        )
+
+
+        return pipeline_audit_id
 
 
     # ========================================================
@@ -112,9 +244,14 @@ def act_rave_ingestion():
             minutes=10
         ),
     )
-    def discover_studies() -> list[str]:
+    def discover_studies(
+        pipeline_audit_id: str,
+    ) -> list[str]:
         """
         Discover studies dynamically from Rave API.
+
+        pipeline_audit_id is passed in so study discovery
+        cannot begin until the parent pipeline audit exists.
 
         Example:
 
@@ -141,7 +278,11 @@ def act_rave_ingestion():
 
 
         logger.info(
-            "study_discovery_started"
+            (
+                "study_discovery_started "
+                "pipeline_audit_id=%s"
+            ),
+            pipeline_audit_id,
         )
 
 
@@ -349,10 +490,12 @@ def act_rave_ingestion():
             (
                 "study_discovery_completed "
                 "study_count=%s "
-                "studies=%s"
+                "studies=%s "
+                "pipeline_audit_id=%s"
             ),
             len(study_ids),
             study_ids,
+            pipeline_audit_id,
         )
 
 
@@ -382,7 +525,7 @@ def act_rave_ingestion():
         load_date is generated ONCE here and passed
         downstream.
 
-        We no longer depend on logical_date.
+        We do not depend on logical_date.
         """
 
         from config.endpoints import (
@@ -519,6 +662,11 @@ def act_rave_ingestion():
         )
 
 
+        ti = context[
+            "ti"
+        ]
+
+
         # ====================================================
         # WORK ITEM
         # ====================================================
@@ -562,16 +710,20 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # RUN ID
+        # RUN / TASK METADATA
+        # ====================================================
         #
-        # run_id is stable across task retries.
-        #
-        # We deliberately do NOT use logical_date here.
+        # Airflow 3 task context exposes this metadata through
+        # the public TaskInstance interface.
         # ====================================================
 
-        run_id = context[
-            "run_id"
-        ]
+        run_id = ti.run_id
+
+        task_id = ti.task_id
+
+        map_index = ti.map_index
+
+        attempt_number = ti.try_number
 
 
         logger.info(
@@ -580,11 +732,17 @@ def act_rave_ingestion():
                 "study_id=%s "
                 "entity=%s "
                 "run_id=%s "
+                "task_id=%s "
+                "map_index=%s "
+                "attempt=%s "
                 "load_date=%s"
             ),
             study_id,
             entity_name,
             run_id,
+            task_id,
+            map_index,
+            attempt_number,
             load_date,
         )
 
@@ -610,6 +768,18 @@ def act_rave_ingestion():
 
                 commit_watermark=
                     True,
+
+                dag_id=
+                    ti.dag_id,
+
+                task_id=
+                    task_id,
+
+                map_index=
+                    map_index,
+
+                attempt_number=
+                    attempt_number,
             )
         )
 
@@ -653,7 +823,14 @@ def act_rave_ingestion():
         results,
     ) -> dict:
         """
-        Summarize all mapped ingestion results.
+        Summarize all successful mapped ingestion results.
+
+        If any mapped ingestion task ultimately fails,
+        the normal ALL_SUCCESS trigger rule prevents this
+        summary from running.
+
+        finish_pipeline_audit still runs afterward because
+        it uses trigger_rule='all_done'.
         """
 
         result_list = list(
@@ -817,11 +994,852 @@ def act_rave_ingestion():
 
 
     # ========================================================
+    # TASK 5
+    # BUILD SNOWFLAKE RAW ENTITY LIST
+    # ========================================================
+
+    @task(
+        task_id="build_snowflake_raw_entities"
+    )
+    def build_snowflake_raw_entities() -> list[str]:
+        """
+        Return the eight Snowflake RAW entities in the
+        established processing order.
+
+        The SQL mapping itself remains centralized in:
+
+            src/snowflake/raw_processor.py
+        """
+
+        from src.snowflake.raw_processor import (
+            RAW_PROCESS_ORDER,
+        )
+
+
+        entities = list(
+            RAW_PROCESS_ORDER
+        )
+
+
+        logger.info(
+            (
+                "snowflake_raw_entities_created "
+                "entity_count=%s "
+                "entities=%s"
+            ),
+            len(entities),
+            entities,
+        )
+
+
+        return entities
+
+
+    # ========================================================
+    # TASK 6
+    # PROCESS ONE SNOWFLAKE RAW ENTITY
+    # ========================================================
+
+    @task(
+        task_id="process_snowflake_raw_entity",
+
+        map_index_template=(
+            "{{ raw_entity_name }}"
+        ),
+
+        retries=2,
+
+        retry_delay=timedelta(
+            seconds=30
+        ),
+
+        retry_exponential_backoff=True,
+
+        max_retry_delay=timedelta(
+            minutes=5
+        ),
+
+        execution_timeout=timedelta(
+            minutes=30
+        ),
+
+        max_active_tis_per_dag=4,
+
+        max_active_tis_per_dagrun=4,
+    )
+    def process_snowflake_raw_entity(
+        entity_name: str,
+    ) -> dict:
+        """
+        Execute the existing Snowflake Option 3 SQL
+        for exactly one RAW entity.
+
+        Example:
+
+            adverse_event
+                ↓
+            010_process_adverse_event_option3.sql
+                ↓
+            LND_ADVERSE_EVENT
+                ↓
+            RAW_ADVERSE_EVENT_HISTORY
+                ↓
+            RAW_ADVERSE_EVENT_CURRENT
+        """
+
+        from src.snowflake.raw_processor import (
+            SnowflakeRawProcessor,
+        )
+
+
+        context = (
+            get_current_context()
+        )
+
+
+        context[
+            "raw_entity_name"
+        ] = entity_name
+
+
+        logger.info(
+            (
+                "snowflake_raw_mapped_task_started "
+                "entity=%s"
+            ),
+            entity_name,
+        )
+
+
+        result = (
+            SnowflakeRawProcessor()
+            .process_entity(
+                entity_name
+            )
+        )
+
+
+        result_dict = (
+            result.to_dict()
+        )
+
+
+        logger.info(
+            (
+                "snowflake_raw_mapped_task_completed "
+                "entity=%s "
+                "status=%s "
+                "sql_file=%s "
+                "statements=%s"
+            ),
+            result.entity_name,
+            result.status,
+            result.sql_file,
+            result.statements_executed,
+        )
+
+
+        return result_dict
+
+
+    # ========================================================
+    # TASK 7
+    # SUMMARIZE SNOWFLAKE RAW PROCESSING
+    # ========================================================
+
+    @task(
+        task_id="summarize_snowflake_raw"
+    )
+    def summarize_snowflake_raw(
+        results,
+    ) -> dict:
+        """
+        Summarize all successful mapped Snowflake RAW tasks.
+
+        This task runs only when every mapped RAW task succeeds.
+        If any RAW task fails, this task becomes upstream_failed
+        and finish_pipeline_audit detects that the RAW summary
+        is unavailable.
+        """
+
+        result_list = list(
+            results
+        )
+
+
+        total_tasks = len(
+            result_list
+        )
+
+
+        successful_tasks = sum(
+
+            1
+
+            for result in result_list
+
+            if (
+                result.get(
+                    "status"
+                )
+                == "SUCCESS"
+            )
+        )
+
+
+        entities = sorted(
+            [
+                result.get(
+                    "entity_name"
+                )
+
+                for result in result_list
+
+                if result.get(
+                    "entity_name"
+                )
+            ]
+        )
+
+
+        total_statements = sum(
+
+            int(
+                result.get(
+                    "statements_executed",
+                    0,
+                )
+                or 0
+            )
+
+            for result in result_list
+        )
+
+
+        summary = {
+
+            "task_count":
+                total_tasks,
+
+            "successful_task_count":
+                successful_tasks,
+
+            "entities":
+                entities,
+
+            "total_statements_executed":
+                total_statements,
+        }
+
+
+        logger.info(
+            (
+                "snowflake_raw_summary "
+                "task_count=%s "
+                "successful_task_count=%s "
+                "total_statements=%s "
+                "entities=%s"
+            ),
+            summary[
+                "task_count"
+            ],
+            summary[
+                "successful_task_count"
+            ],
+            summary[
+                "total_statements_executed"
+            ],
+            summary[
+                "entities"
+            ],
+        )
+
+
+        return summary
+
+
+    # ========================================================
+    # TASK 8
+    # FINISH PIPELINE RUN AUDIT
+    # ========================================================
+
+    @task(
+        task_id="finish_pipeline_audit",
+
+        # ----------------------------------------------------
+        # Run after upstream work is terminal even when
+        # discovery, mapping, ingestion, or summary failed.
+        # ----------------------------------------------------
+
+        trigger_rule="all_done",
+
+        retries=2,
+
+        retry_delay=timedelta(
+            seconds=30
+        ),
+
+        retry_exponential_backoff=True,
+
+        max_retry_delay=timedelta(
+            minutes=5
+        ),
+
+        execution_timeout=timedelta(
+            minutes=10
+        ),
+    )
+    def finish_pipeline_audit(
+        pipeline_audit_id: str,
+    ) -> dict:
+        """
+        Finalize one PIPELINE_RUN_AUDIT row.
+
+        Status is determined from:
+
+        1. Expected API/S3 work-item count from Airflow XCom.
+        2. Latest ENTITY_LOAD_AUDIT status for every
+           study + entity in the current DAG run.
+        3. Snowflake RAW processing summary.
+
+        SUCCESS requires:
+
+            all study/entity API -> S3 work items successful
+
+        AND
+
+            all eight Snowflake RAW entity tasks successful
+
+        Any failed, missing, or incomplete API/S3 item or
+        Snowflake RAW item makes the pipeline audit FAILED.
+        """
+
+        import snowflake.connector
+
+        from config.endpoints import (
+            ENDPOINTS,
+        )
+
+        from src.snowflake.control_audit import (
+            ControlAuditClient,
+        )
+
+        from src.snowflake.raw_processor import (
+            RAW_PROCESS_ORDER,
+        )
+
+
+        context = (
+            get_current_context()
+        )
+
+
+        ti = context[
+            "ti"
+        ]
+
+
+        run_id = ti.run_id
+
+
+        # ====================================================
+        # DISCOVERY / WORK-ITEM COUNTS FROM XCOM
+        # ====================================================
+
+        study_ids = (
+            ti.xcom_pull(
+                task_ids=
+                    "discover_studies"
+            )
+        )
+
+
+        work_items = (
+            ti.xcom_pull(
+                task_ids=
+                    "build_ingestion_work_items"
+            )
+        )
+
+
+        raw_summary = (
+            ti.xcom_pull(
+                task_ids=
+                    "summarize_snowflake_raw"
+            )
+        )
+
+
+        if isinstance(
+            study_ids,
+            list,
+        ):
+
+            studies_discovered = len(
+                study_ids
+            )
+
+
+        else:
+
+            studies_discovered = None
+
+
+        if isinstance(
+            work_items,
+            list,
+        ):
+
+            work_items_created = len(
+                work_items
+            )
+
+
+        elif studies_discovered is not None:
+
+            work_items_created = (
+                studies_discovered
+                * len(
+                    ENDPOINTS
+                )
+            )
+
+
+        else:
+
+            work_items_created = None
+
+
+        # ====================================================
+        # READ LATEST ENTITY AUDIT RESULT PER BUSINESS UNIT
+        # ====================================================
+        #
+        # A mapped task may be retried. We therefore inspect
+        # only the latest audit row for:
+        #
+        #     STUDY_ID + ENTITY_NAME
+        #
+        # within this DAG_RUN_ID.
+        # ====================================================
+
+        control_audit_client = (
+            ControlAuditClient()
+        )
+
+
+        conn = (
+            snowflake.connector.connect(
+                connection_name=
+                    control_audit_client.connection_name,
+
+                application=
+                    "ACT_PIPELINE_AUDIT_FINALIZER",
+            )
+        )
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    WITH LATEST_ENTITY_STATUS AS
+                    (
+                        SELECT
+                            STUDY_ID,
+                            ENTITY_NAME,
+                            STATUS,
+
+                            ROW_NUMBER() OVER
+                            (
+                                PARTITION BY
+                                    STUDY_ID,
+                                    ENTITY_NAME
+
+                                ORDER BY
+                                    ENDED_AT DESC NULLS LAST,
+                                    UPDATED_AT DESC NULLS LAST,
+                                    CREATED_AT DESC NULLS LAST
+                            ) AS RN
+
+                        FROM ACT_DB.CONTROL.ENTITY_LOAD_AUDIT
+
+                        WHERE DAG_RUN_ID = %s
+                    )
+
+                    SELECT
+                        COUNT(*) AS AUDITED_ITEMS,
+
+                        COUNT_IF(
+                            STATUS IN (
+                                'SUCCESS',
+                                'NO_NEW_DATA'
+                            )
+                        ) AS SUCCESSFUL_ITEMS,
+
+                        COUNT_IF(
+                            STATUS = 'FAILED'
+                        ) AS FAILED_ITEMS,
+
+                        COUNT_IF(
+                            STATUS NOT IN (
+                                'SUCCESS',
+                                'NO_NEW_DATA',
+                                'FAILED'
+                            )
+                            OR STATUS IS NULL
+                        ) AS INCOMPLETE_ITEMS
+
+                    FROM LATEST_ENTITY_STATUS
+
+                    WHERE RN = 1
+                    """,
+                    (
+                        run_id,
+                    ),
+                )
+
+
+                row = cur.fetchone()
+
+
+        finally:
+
+            conn.close()
+
+
+        audited_items = int(
+            row[0] or 0
+        )
+
+        successful_items = int(
+            row[1] or 0
+        )
+
+        failed_items = int(
+            row[2] or 0
+        )
+
+        incomplete_items = int(
+            row[3] or 0
+        )
+
+
+        # ====================================================
+        # DETERMINE FINAL PIPELINE STATUS
+        # ====================================================
+
+        error_parts = []
+
+
+        if work_items_created is None:
+
+            error_parts.append(
+                "expected work item count unavailable"
+            )
+
+
+        else:
+
+            if (
+                audited_items
+                != work_items_created
+            ):
+
+                error_parts.append(
+                    (
+                        "audited_items="
+                        f"{audited_items} "
+                        "expected_items="
+                        f"{work_items_created}"
+                    )
+                )
+
+
+        if failed_items > 0:
+
+            error_parts.append(
+                (
+                    "failed_items="
+                    f"{failed_items}"
+                )
+            )
+
+
+        if incomplete_items > 0:
+
+            error_parts.append(
+                (
+                    "incomplete_items="
+                    f"{incomplete_items}"
+                )
+            )
+
+
+        if (
+            work_items_created is not None
+            and successful_items
+            != work_items_created
+        ):
+
+            error_parts.append(
+                (
+                    "successful_items="
+                    f"{successful_items} "
+                    "expected_items="
+                    f"{work_items_created}"
+                )
+            )
+
+
+        # ====================================================
+        # SNOWFLAKE RAW VALIDATION
+        # ====================================================
+
+        expected_raw_tasks = len(
+            RAW_PROCESS_ORDER
+        )
+
+
+        raw_task_count = None
+
+        raw_successful_task_count = None
+
+
+        if not isinstance(
+            raw_summary,
+            dict,
+        ):
+
+            error_parts.append(
+                "Snowflake RAW summary unavailable"
+            )
+
+
+        else:
+
+            raw_task_count = (
+                raw_summary.get(
+                    "task_count"
+                )
+            )
+
+
+            raw_successful_task_count = (
+                raw_summary.get(
+                    "successful_task_count"
+                )
+            )
+
+
+            if (
+                raw_task_count
+                != expected_raw_tasks
+            ):
+
+                error_parts.append(
+                    (
+                        "raw_task_count="
+                        f"{raw_task_count} "
+                        "expected_raw_tasks="
+                        f"{expected_raw_tasks}"
+                    )
+                )
+
+
+            if (
+                raw_successful_task_count
+                != expected_raw_tasks
+            ):
+
+                error_parts.append(
+                    (
+                        "raw_successful_tasks="
+                        f"{raw_successful_task_count} "
+                        "expected_raw_tasks="
+                        f"{expected_raw_tasks}"
+                    )
+                )
+
+
+        if error_parts:
+
+            final_status = "FAILED"
+
+            error_message = "; ".join(
+                error_parts
+            )
+
+
+        else:
+
+            final_status = "SUCCESS"
+
+            error_message = None
+
+
+        # ====================================================
+        # COMPLETE PARENT PIPELINE AUDIT
+        # ====================================================
+
+        control_audit_client.finish_pipeline_run(
+
+            pipeline_audit_id=
+                pipeline_audit_id,
+
+            status=
+                final_status,
+
+            studies_discovered=
+                studies_discovered,
+
+            work_items_created=
+                work_items_created,
+
+            successful_items=
+                successful_items,
+
+            failed_items=
+                (
+                    failed_items
+                    + incomplete_items
+                    + max(
+                        0,
+                        (
+                            work_items_created
+                            or 0
+                        )
+                        - audited_items,
+                    )
+                ),
+
+            error_message=
+                error_message,
+        )
+
+
+        result = {
+
+            "pipeline_audit_id":
+                pipeline_audit_id,
+
+            "dag_run_id":
+                run_id,
+
+            "status":
+                final_status,
+
+            "studies_discovered":
+                studies_discovered,
+
+            "work_items_created":
+                work_items_created,
+
+            "audited_items":
+                audited_items,
+
+            "successful_items":
+                successful_items,
+
+            "failed_items":
+                failed_items,
+
+            "incomplete_items":
+                incomplete_items,
+
+            "snowflake_raw_task_count":
+                raw_task_count,
+
+            "snowflake_raw_successful_task_count":
+                raw_successful_task_count,
+
+            "expected_snowflake_raw_tasks":
+                expected_raw_tasks,
+
+            "error_message":
+                error_message,
+        }
+
+
+        logger.info(
+            (
+                "pipeline_audit_completed "
+                "pipeline_audit_id=%s "
+                "dag_run_id=%s "
+                "status=%s "
+                "studies=%s "
+                "work_items=%s "
+                "audited_items=%s "
+                "successful_items=%s "
+                "failed_items=%s "
+                "incomplete_items=%s "
+                "raw_tasks=%s "
+                "raw_successful_tasks=%s "
+                "expected_raw_tasks=%s"
+            ),
+            pipeline_audit_id,
+            run_id,
+            final_status,
+            studies_discovered,
+            work_items_created,
+            audited_items,
+            successful_items,
+            failed_items,
+            incomplete_items,
+            raw_task_count,
+            raw_successful_task_count,
+            expected_raw_tasks,
+        )
+
+
+        # ====================================================
+        # KEEP AIRFLOW DAG STATUS CONSISTENT WITH AUDIT STATUS
+        # ====================================================
+        #
+        # Because this finalizer uses trigger_rule=all_done,
+        # it can execute after an upstream failure.
+        #
+        # If we merely returned SUCCESS from this task after
+        # writing PIPELINE_RUN_AUDIT = FAILED, the finalizer
+        # could become the only successful leaf task and make
+        # the Airflow DAG run look successful.
+        #
+        # Therefore:
+        #
+        #     audit FAILED
+        #         =>
+        #     finalizer task FAILED
+        #         =>
+        #     DAG run FAILED
+        # ====================================================
+
+        if final_status != "SUCCESS":
+
+            raise RuntimeError(
+                (
+                    "ACT pipeline failed. "
+                    f"{error_message}"
+                )
+            )
+
+
+        return result
+
+
+    # ========================================================
     # DAG FLOW
     # ========================================================
 
+    pipeline_audit_id = (
+        start_pipeline_audit()
+    )
+
+
     study_ids = (
-        discover_studies()
+        discover_studies(
+            pipeline_audit_id
+        )
     )
 
 
@@ -831,6 +1849,16 @@ def act_rave_ingestion():
         )
     )
 
+
+    # ========================================================
+    # API -> S3
+    #
+    # Current lab:
+    #
+    #     2 studies × 8 entities
+    #     =
+    #     16 dynamically mapped tasks
+    # ========================================================
 
     ingestion_results = (
 
@@ -843,9 +1871,76 @@ def act_rave_ingestion():
     )
 
 
-    summarize_ingestion(
-        ingestion_results
+    ingestion_summary = (
+        summarize_ingestion(
+            ingestion_results
+        )
     )
+
+
+    # ========================================================
+    # S3 -> SNOWFLAKE RAW
+    #
+    # One task per entity, not per study.
+    #
+    # Each existing Option 3 SQL file processes all new S3
+    # files for that entity across studies.
+    # ========================================================
+
+    raw_entities = (
+        build_snowflake_raw_entities()
+    )
+
+
+    # --------------------------------------------------------
+    # Do not start Snowflake RAW processing until the complete
+    # API -> S3 ingestion stage has succeeded.
+    # --------------------------------------------------------
+
+    ingestion_summary >> raw_entities
+
+
+    raw_results = (
+
+        process_snowflake_raw_entity
+
+        .expand(
+            entity_name=
+                raw_entities
+        )
+    )
+
+
+    raw_summary = (
+        summarize_snowflake_raw(
+            raw_results
+        )
+    )
+
+
+    # ========================================================
+    # PIPELINE FINALIZER
+    # ========================================================
+
+    final_audit = (
+        finish_pipeline_audit(
+            pipeline_audit_id
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # final_audit waits until the Snowflake RAW stage is
+    # terminal.
+    #
+    # If an upstream task fails:
+    #   raw_summary becomes upstream_failed
+    #   final_audit still runs because trigger_rule=all_done
+    #   final_audit writes PIPELINE_RUN_AUDIT=FAILED
+    #   final_audit then raises so the Airflow DAG is FAILED.
+    # --------------------------------------------------------
+
+    raw_summary >> final_audit
 
 
 # ============================================================

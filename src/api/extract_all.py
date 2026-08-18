@@ -43,6 +43,10 @@ from src.processing.validator import (
     validate_records,
 )
 
+from src.snowflake.control_audit import (
+    ControlAuditClient,
+)
+
 from src.watermark.watermark_manager import (
     WatermarkManager,
 )
@@ -509,6 +513,57 @@ def _extract_all_pages(
 
 
 # ============================================================
+# AUDIT FAILURE HELPER
+# ============================================================
+
+def _mark_entity_audit_failed(
+    control_audit_client: ControlAuditClient,
+    entity_load_audit_id: str | None,
+    error: Exception,
+) -> None:
+    """
+    Best-effort failure update for an already-created
+    ENTITY_LOAD_AUDIT row.
+
+    Important:
+
+    If the pipeline itself failed, an audit-update problem
+    must NOT hide the original pipeline exception.
+    """
+
+    if not entity_load_audit_id:
+
+        return
+
+
+    try:
+
+        control_audit_client.finish_entity_load(
+            entity_load_audit_id=
+                entity_load_audit_id,
+
+            status=
+                "FAILED",
+
+            error_message=
+                str(
+                    error
+                ),
+        )
+
+
+    except Exception:
+
+        logger.exception(
+            (
+                "entity_audit_failure_update_failed "
+                "entity_load_audit_id=%s"
+            ),
+            entity_load_audit_id,
+        )
+
+
+# ============================================================
 # MAIN INGESTION FUNCTION
 # ============================================================
 
@@ -519,6 +574,10 @@ def ingest_study_entity(
     load_date: str,
     page_size: int = DEFAULT_PAGE_SIZE,
     commit_watermark: bool = True,
+    dag_id: str | None = "act_rave_ingestion",
+    task_id: str | None = None,
+    map_index: int | None = None,
+    attempt_number: int | None = None,
 ) -> IngestionResult:
     """
     Complete ACT ingestion for exactly:
@@ -541,24 +600,28 @@ def ingest_study_entity(
 
     2. Calculate extraction watermark
 
-    3. Call source API with:
+    3. Start ENTITY_LOAD_AUDIT
+
+    4. Call source API with:
 
         study_id
         updated_since
         offset
         limit
 
-    4. Parse all pages
+    5. Parse all pages
 
-    5. Validate
+    6. Validate
 
-    6. Normalize
+    7. Normalize
 
-    7. Upload CSV to S3
+    8. Upload CSV to S3
 
-    8. Verify S3 object
+    9. Verify S3 object
 
-    9. ONLY THEN commit new watermark
+    10. ONLY THEN commit new watermark
+
+    11. Complete ENTITY_LOAD_AUDIT
 
 
     IMPORTANT
@@ -570,6 +633,17 @@ def ingest_study_entity(
     Production Airflow execution should use:
 
         commit_watermark=True
+
+    Audit rule:
+
+        If an entity audit row cannot be created,
+        ingestion stops before the API extraction.
+
+        If the pipeline later fails, the audit row
+        is marked FAILED on a best-effort basis.
+
+        An audit-update failure never hides the
+        original pipeline exception.
     """
 
     # ========================================================
@@ -616,6 +690,24 @@ def ingest_study_entity(
     watermark_manager = (
         WatermarkManager()
     )
+
+
+    control_audit_client = (
+        ControlAuditClient()
+    )
+
+
+    # ========================================================
+    # AUDIT / FAILURE CONTEXT
+    # ========================================================
+
+    entity_load_audit_id: str | None = None
+
+    previous_watermark: str | None = None
+
+    extraction_watermark: str | None = None
+
+    load_type = "UNKNOWN"
 
 
     try:
@@ -674,7 +766,48 @@ def ingest_study_entity(
 
 
         # ====================================================
-        # 3. EXTRACT ALL API PAGES
+        # 3. START ENTITY LOAD AUDIT
+        # ========================================================
+        #
+        # SOURCE_WATERMARK_FROM stores the actual extraction
+        # lower bound sent to the API, including overlap.
+        # ====================================================
+
+        entity_load_audit_id = (
+            control_audit_client.start_entity_load(
+
+                dag_id=
+                    dag_id,
+
+                dag_run_id=
+                    run_id,
+
+                task_id=
+                    task_id,
+
+                map_index=
+                    map_index,
+
+                attempt_number=
+                    attempt_number,
+
+                study_id=
+                    study_id,
+
+                entity_name=
+                    entity_name,
+
+                load_type=
+                    load_type,
+
+                source_watermark_from=
+                    extraction_watermark,
+            )
+        )
+
+
+        # ====================================================
+        # 4. EXTRACT ALL API PAGES
         # ====================================================
 
         with RaveAPIClient() as api_client:
@@ -702,7 +835,7 @@ def ingest_study_entity(
 
 
         # ====================================================
-        # 4. CHECK STUDY SCOPE
+        # 5. CHECK STUDY SCOPE
         # ====================================================
 
         _validate_record_study_scope(
@@ -713,7 +846,7 @@ def ingest_study_entity(
 
 
         # ====================================================
-        # 5. VALIDATE
+        # 6. VALIDATE
         # ====================================================
 
         validation = (
@@ -733,6 +866,37 @@ def ingest_study_entity(
 
         if validation.record_count == 0:
 
+            control_audit_client.finish_entity_load(
+
+                entity_load_audit_id=
+                    entity_load_audit_id,
+
+                status=
+                    "NO_NEW_DATA",
+
+                source_row_count=
+                    0,
+
+                s3_row_count=
+                    0,
+
+                snowflake_row_count=
+                    None,
+
+                source_watermark_to=
+                    previous_watermark,
+
+                s3_uri=
+                    None,
+
+                file_checksum=
+                    None,
+
+                error_message=
+                    None,
+            )
+
+
             logger.info(
                 (
                     "study_id=%s "
@@ -740,12 +904,14 @@ def ingest_study_entity(
                     "ingestion_completed "
                     "status=NO_NEW_DATA "
                     "load_type=%s "
-                    "previous_watermark=%s"
+                    "previous_watermark=%s "
+                    "entity_load_audit_id=%s"
                 ),
                 study_id,
                 entity_name,
                 load_type,
                 previous_watermark,
+                entity_load_audit_id,
             )
 
 
@@ -796,7 +962,7 @@ def ingest_study_entity(
 
 
         # ====================================================
-        # 6. NORMALIZE
+        # 7. NORMALIZE
         # ====================================================
 
         normalized = (
@@ -814,8 +980,13 @@ def ingest_study_entity(
         )
 
 
+        s3_row_count = len(
+            normalized.dataframe
+        )
+
+
         # ====================================================
-        # 7. S3 UPLOAD
+        # 8. S3 UPLOAD
         # ====================================================
 
         s3_client = (
@@ -864,7 +1035,7 @@ def ingest_study_entity(
 
 
         # ====================================================
-        # 8. NEW WATERMARK
+        # 9. NEW WATERMARK
         # ====================================================
 
         new_watermark = (
@@ -884,7 +1055,7 @@ def ingest_study_entity(
 
 
         # ====================================================
-        # 9. COMMIT WATERMARK
+        # 10. COMMIT WATERMARK
         # ====================================================
         #
         # CRITICAL RULE:
@@ -915,6 +1086,9 @@ def ingest_study_entity(
 
                     new_watermark=
                         new_watermark,
+
+                    run_id=
+                        run_id,
                 )
             )
 
@@ -944,6 +1118,50 @@ def ingest_study_entity(
 
 
         # ====================================================
+        # 11. COMPLETE ENTITY LOAD AUDIT
+        # ========================================================
+        #
+        # SNOWFLAKE_ROW_COUNT remains NULL here because this
+        # function audits API -> S3 ingestion.
+        #
+        # RAW Snowflake COPY/MERGE processing is a separate
+        # downstream step and can populate Snowflake-specific
+        # audit information later when that orchestration is
+        # wired into Airflow.
+        # ====================================================
+
+        control_audit_client.finish_entity_load(
+
+            entity_load_audit_id=
+                entity_load_audit_id,
+
+            status=
+                "SUCCESS",
+
+            source_row_count=
+                validation.record_count,
+
+            s3_row_count=
+                s3_row_count,
+
+            snowflake_row_count=
+                None,
+
+            source_watermark_to=
+                new_watermark,
+
+            s3_uri=
+                upload_result.s3_uri,
+
+            file_checksum=
+                upload_result.checksum,
+
+            error_message=
+                None,
+        )
+
+
+        # ====================================================
         # SUCCESS
         # ====================================================
 
@@ -959,7 +1177,8 @@ def ingest_study_entity(
                 "s3_uri=%s "
                 "previous_watermark=%s "
                 "new_watermark=%s "
-                "watermark_committed=%s"
+                "watermark_committed=%s "
+                "entity_load_audit_id=%s"
             ),
             study_id,
             entity_name,
@@ -970,6 +1189,7 @@ def ingest_study_entity(
             previous_watermark,
             new_watermark,
             watermark_committed,
+            entity_load_audit_id,
         )
 
 
@@ -1023,18 +1243,32 @@ def ingest_study_entity(
     # KNOWN PIPELINE ERROR
     # ========================================================
 
-    except ACTPipelineError:
+    except ACTPipelineError as exc:
+
+        _mark_entity_audit_failed(
+            control_audit_client=
+                control_audit_client,
+
+            entity_load_audit_id=
+                entity_load_audit_id,
+
+            error=
+                exc,
+        )
+
 
         logger.exception(
             (
                 "study_id=%s "
                 "entity=%s "
                 "ingestion_failed "
-                "run_id=%s"
+                "run_id=%s "
+                "entity_load_audit_id=%s"
             ),
             study_id,
             entity_name,
             run_id,
+            entity_load_audit_id,
         )
 
         raise
@@ -1044,18 +1278,32 @@ def ingest_study_entity(
     # UNEXPECTED ERROR
     # ========================================================
 
-    except Exception:
+    except Exception as exc:
+
+        _mark_entity_audit_failed(
+            control_audit_client=
+                control_audit_client,
+
+            entity_load_audit_id=
+                entity_load_audit_id,
+
+            error=
+                exc,
+        )
+
 
         logger.exception(
             (
                 "study_id=%s "
                 "entity=%s "
                 "unexpected_ingestion_failure "
-                "run_id=%s"
+                "run_id=%s "
+                "entity_load_audit_id=%s"
             ),
             study_id,
             entity_name,
             run_id,
+            entity_load_audit_id,
         )
 
         raise

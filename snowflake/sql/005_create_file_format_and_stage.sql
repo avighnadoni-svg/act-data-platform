@@ -52,7 +52,7 @@ CREATE FILE FORMAT IF NOT EXISTS ACT_RAW_CSV_FF
 -- ---------------------------------------------------------------------------
 
 CREATE STAGE IF NOT EXISTS ACT_RAW_S3_STAGE
-    URL = 's3://act-clinical-data-dev/act/raw/'
+    URL = 's3://act-clinical-data-dev1/act/raw/'
     STORAGE_INTEGRATION = ACT_S3_INT
     FILE_FORMAT = ACT_RAW_CSV_FF
     COMMENT = 'External S3 stage for ACT RAW multi-study ingestion';

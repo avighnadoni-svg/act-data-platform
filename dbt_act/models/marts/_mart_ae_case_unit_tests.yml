@@ -1,0 +1,202 @@
+version: 2
+
+unit_tests:
+
+  # ============================================================
+  # TEST 1
+  #
+  # FULL REFRESH MODE
+  #
+  # is_incremental() = FALSE
+  #
+  # Expected:
+  # Every source row should be processed.
+  # ============================================================
+
+  - name: test_mart_ae_case_full_refresh_mode
+
+    description: >
+      Verify that MART_AE_CASE processes all available
+      adverse-event records when running in full-refresh mode.
+
+    model: mart_ae_case
+
+    overrides:
+
+      macros:
+        is_incremental: false
+
+    given:
+
+      - input: ref('int_adverse_event_operational_context')
+
+        format: dict
+
+        rows:
+
+          - study_id: ONC101
+            ae_id: AE001
+            subject_id: SUB001
+            site_id: SITE01
+            event_term: Headache
+            severity: MILD
+            serious: N
+            operational_context_updated_at: "2026-08-18 10:00:00 +00:00"
+
+          - study_id: ONC101
+            ae_id: AE002
+            subject_id: SUB002
+            site_id: SITE01
+            event_term: Nausea
+            severity: MODERATE
+            serious: N
+            operational_context_updated_at: "2026-08-18 11:00:00 +00:00"
+
+
+    expect:
+
+      format: dict
+
+      rows:
+
+        - study_id: ONC101
+          ae_id: AE001
+
+        - study_id: ONC101
+          ae_id: AE002
+
+
+  # ============================================================
+  # TEST 2
+  #
+  # INCREMENTAL MODE
+  #
+  # Existing target maximum timestamp:
+  #
+  #   10:00:00
+  #
+  # Our model subtracts 5 seconds:
+  #
+  #   09:59:55
+  #
+  # Source:
+  #
+  # AE001 = 09:59:50 → exclude
+  # AE002 = 09:59:58 → include because of overlap
+  # AE003 = 10:01:00 → include because it is new/changed
+  #
+  # Expected:
+  #
+  # AE002
+  # AE003
+  # ============================================================
+
+  - name: test_mart_ae_case_incremental_watermark
+
+    description: >
+      Verify that MART_AE_CASE incremental processing
+      selects new and changed adverse-event contexts while
+      preserving the five-second watermark overlap.
+
+    model: mart_ae_case
+
+    overrides:
+
+      macros:
+        is_incremental: true
+
+    given:
+
+      # ==========================================================
+      # CURRENT SOURCE
+      # ==========================================================
+
+      - input: ref('int_adverse_event_operational_context')
+
+        format: dict
+
+        rows:
+
+          # ------------------------------------------------------
+          # Too old
+          #
+          # Existing max = 10:00:00
+          # Lower bound  = 09:59:55
+          #
+          # 09:59:50 < 09:59:55
+          #
+          # Should NOT be processed.
+          # ------------------------------------------------------
+
+          - study_id: ONC101
+            ae_id: AE001
+            subject_id: SUB001
+            site_id: SITE01
+            event_term: Headache
+            severity: MILD
+            serious: N
+            operational_context_updated_at: "2026-08-18 09:59:50 +00:00"
+
+
+          # ------------------------------------------------------
+          # Within 5-second overlap
+          #
+          # 09:59:58 >= 09:59:55
+          #
+          # Should be processed.
+          # ------------------------------------------------------
+
+          - study_id: ONC101
+            ae_id: AE002
+            subject_id: SUB002
+            site_id: SITE01
+            event_term: Nausea
+            severity: MODERATE
+            serious: N
+            operational_context_updated_at: "2026-08-18 09:59:58 +00:00"
+
+
+          # ------------------------------------------------------
+          # Newer than target watermark
+          #
+          # Should be processed.
+          # ------------------------------------------------------
+
+          - study_id: ONC102
+            ae_id: AE003
+            subject_id: SUB003
+            site_id: SITE02
+            event_term: Dizziness
+            severity: SEVERE
+            serious: Y
+            operational_context_updated_at: "2026-08-18 10:01:00 +00:00"
+
+
+      # ==========================================================
+      # EXISTING MART
+      #
+      # This mocks {{ this }}.
+      # ==========================================================
+
+      - input: this
+
+        format: dict
+
+        rows:
+
+          - study_id: ONC101
+            ae_id: AE000
+            operational_context_updated_at: "2026-08-18 10:00:00 +00:00"
+
+
+    expect:
+
+      format: dict
+
+      rows:
+
+        - study_id: ONC101
+          ae_id: AE002
+
+        - study_id: ONC102
+          ae_id: AE003

@@ -1,0 +1,161 @@
+version: 2
+
+models:
+
+  - name: stg_protocol_deviation
+
+    description: >
+      Clean staging view over
+      ACT_DB.RAW.RAW_PROTOCOL_DEVIATION_CURRENT.
+      Grain is one row per STUDY_ID + DEVIATION_ID.
+
+    # ============================================================
+    # MODEL LEVEL TESTS
+    # ============================================================
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - deviation_id
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: protocol_deviation_key
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + DEVIATION_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: study_key
+
+        description: Parent-study technical key.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('stg_study')
+                field: study_key
+
+
+      - name: subject_key
+
+        description: >
+          Parent-subject technical key.
+          NULL when SUBJECT_ID is not supplied.
+
+        data_tests:
+
+          - relationships:
+              arguments:
+                to: ref('stg_subject')
+                field: subject_key
+
+
+      - name: site_key
+
+        description: >
+          Parent-site technical key.
+          NULL when SITE_ID is not supplied.
+
+        data_tests:
+
+          - relationships:
+              arguments:
+                to: ref('stg_site')
+                field: site_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        description: Clinical-study identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: deviation_id
+        description: Protocol-deviation business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        description: Subject associated with the deviation.
+
+
+      - name: site_id
+        description: Site associated with the deviation.
+
+
+      # ==========================================================
+      # ATTRIBUTES
+      # ==========================================================
+
+      - name: deviation_type
+
+        description: Protocol-deviation category.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: severity
+
+        description: Protocol-deviation severity.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - MINOR
+                  - MAJOR
+                  - CRITICAL
+
+
+      # ==========================================================
+      # TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+
+      - name: record_hash
+
+      - name: source_system
+
+      - name: source_entity
+
+      - name: dag_run_id
+
+      - name: ingested_at
+
+      - name: source_file_name
+
+      - name: source_file_row_number
+
+      - name: source_file_content_key
+
+      - name: source_file_last_modified
+
+      - name: snowflake_load_ts
+
+      - name: current_row_updated_at

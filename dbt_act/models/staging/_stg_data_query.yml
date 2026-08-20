@@ -1,0 +1,174 @@
+version: 2
+
+models:
+
+  - name: stg_data_query
+
+    description: >
+      Clean staging view over ACT_DB.RAW.RAW_DATA_QUERY_CURRENT.
+      Grain is one row per STUDY_ID + QUERY_ID.
+
+    # ============================================================
+    # MODEL LEVEL TESTS
+    # ============================================================
+
+    data_tests:
+
+      # ----------------------------------------------------------
+      # Composite uniqueness
+      # ----------------------------------------------------------
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - query_id
+
+
+      # ----------------------------------------------------------
+      # RESOLVED_DATE must be >= OPENED_DATE
+      #
+      # Only applies to resolved queries.
+      # ----------------------------------------------------------
+
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          arguments:
+            column_A: resolved_date
+            column_B: opened_date
+            or_equal: true
+            row_condition: >
+              resolved_date is not null
+              and opened_date is not null
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: data_query_key
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + QUERY_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: subject_key
+
+        description: Parent-subject technical key.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('stg_subject')
+                field: subject_key
+
+
+      - name: site_key
+
+        description: Parent-site technical key.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('stg_site')
+                field: site_key
+
+
+      - name: study_key
+
+        description: Parent-study technical key.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('stg_study')
+                field: study_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_tests:
+          - not_null
+
+
+      - name: query_id
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # QUERY ATTRIBUTES
+      # ==========================================================
+
+      - name: opened_date
+
+        data_tests:
+          - not_null
+
+
+      - name: resolved_date
+
+        description: >
+          Resolution date. NULL is valid for an unresolved query.
+
+
+      - name: status
+
+        description: Current data-query status.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      # ==========================================================
+      # TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+
+      - name: record_hash
+
+      - name: source_system
+
+      - name: source_entity
+
+      - name: dag_run_id
+
+      - name: ingested_at
+
+      - name: source_file_name
+
+      - name: source_file_row_number
+
+      - name: source_file_content_key
+
+      - name: source_file_last_modified
+
+      - name: snowflake_load_ts
+
+      - name: current_row_updated_at

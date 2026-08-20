@@ -1,0 +1,109 @@
+version: 2
+
+models:
+
+  - name: int_adverse_event_context
+
+    description: >
+      Reusable adverse-event-level dataset enriched with subject,
+      site and study context. Grain is one row per STUDY_ID + AE_ID.
+
+    columns:
+
+      - name: study_id
+        description: Clinical-study identifier.
+        data_tests:
+          - not_null
+
+      - name: ae_id
+        description: Adverse-event business identifier.
+        data_tests:
+          - not_null
+
+      - name: subject_id
+        description: Subject associated with the adverse event.
+        data_tests:
+          - not_null
+
+      - name: event_term
+        description: Reported adverse-event term.
+        data_tests:
+          - not_null
+
+      - name: severity
+        description: Adverse-event severity.
+
+      - name: serious
+        description: Seriousness indicator.
+
+      - name: event_date
+        description: Date on which the adverse event occurred.
+
+      - name: reported_date
+        description: Date on which the adverse event was reported.
+
+      - name: processing_priority
+        description: ACT processing priority.
+
+      - name: requires_safety_review
+        description: Indicates whether safety review is required.
+
+      - name: site_id
+        description: Site associated with the subject.
+        data_tests:
+          - not_null
+
+      - name: gender
+        description: Subject gender.
+
+      - name: age
+        description: Subject age.
+
+      - name: subject_status
+        description: Current subject status.
+
+      - name: enrollment_date
+        description: Subject enrollment date.
+
+      - name: country
+        description: Country of the clinical site.
+        data_tests:
+          - not_null
+
+      - name: investigator
+        description: Site investigator.
+
+      - name: target_enrollment
+        description: Site target enrollment.
+
+      - name: study_name
+        description: Clinical-study name.
+        data_tests:
+          - not_null
+
+      - name: phase
+        description: Clinical-trial phase.
+
+      - name: target_subjects
+        description: Study-level target subject count.
+
+      - name: ae_source_updated_at
+        description: Last source update timestamp for the adverse event.
+
+      - name: subject_source_updated_at
+        description: Last source update timestamp for the subject.
+
+      - name: site_source_updated_at
+        description: Last source update timestamp for the site.
+
+      - name: study_source_updated_at
+        description: Last source update timestamp for the study.
+
+      - name: record_hash
+        description: RAW adverse-event business-content hash.
+
+      - name: dag_run_id
+        description: Airflow DAG run responsible for ingestion.
+
+      - name: ingested_at
+        description: Timestamp when ACT ingested the adverse event.

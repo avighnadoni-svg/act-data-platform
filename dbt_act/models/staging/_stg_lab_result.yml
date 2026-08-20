@@ -1,0 +1,122 @@
+version: 2
+
+models:
+
+  - name: stg_lab_result
+
+    description: >
+      Clean staging view over
+      ACT_DB.RAW.RAW_LAB_RESULT_CURRENT.
+      Grain is one row per STUDY_ID + LAB_ID.
+
+    data_tests:
+
+      # Composite business key
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - lab_id
+
+      # NORMAL_HIGH should not be below NORMAL_LOW
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          arguments:
+            column_A: normal_high
+            column_B: normal_low
+            or_equal: true
+            row_condition: >
+              normal_high is not null
+              and normal_low is not null
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: lab_result_key
+        description: Technical key generated from STUDY_ID + LAB_ID.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: subject_key
+        description: Parent subject technical key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_subject')
+                field: subject_key
+
+      - name: study_key
+        description: Parent study technical key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_study')
+                field: study_key
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_tests:
+          - not_null
+
+      - name: lab_id
+        data_tests:
+          - not_null
+
+      - name: subject_id
+        data_tests:
+          - not_null
+
+      # ==========================================================
+      # LAB ATTRIBUTES
+      # ==========================================================
+
+      - name: test_name
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+      - name: result_value
+
+      - name: normal_low
+
+      - name: normal_high
+
+      - name: interpretation
+
+      - name: abnormal
+
+      # ==========================================================
+      # TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+
+      - name: record_hash
+
+      - name: source_system
+
+      - name: source_entity
+
+      - name: dag_run_id
+
+      - name: ingested_at
+
+      - name: source_file_name
+
+      - name: source_file_row_number
+
+      - name: source_file_content_key
+
+      - name: source_file_last_modified
+
+      - name: snowflake_load_ts
+
+      - name: current_row_updated_at

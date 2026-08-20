@@ -1,0 +1,42 @@
+# dbt_act/profiles.yml
+#
+# ACT local dbt Core profile.
+#
+# No Snowflake password is stored in this file.
+# Connection values are supplied through environment variables.
+#
+# For the current development lab, load them with:
+#
+#     source scripts/load_dbt_env.sh
+#
+# from the repository root.
+
+act_dbt:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+
+  outputs:
+    dev:
+      type: snowflake
+
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+
+      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ACT_DB') }}"
+
+      # Base development schema.
+      #
+      # dbt_project.yml adds the layer-specific custom schema:
+      #
+      #   DBT_DEV + STAGING      -> DBT_DEV_STAGING
+      #   DBT_DEV + INTERMEDIATE -> DBT_DEV_INTERMEDIATE
+      #   DBT_DEV + MARTS        -> DBT_DEV_MARTS
+      schema: "{{ env_var('DBT_DEV_SCHEMA', 'DBT_DEV') }}"
+
+      threads: 4
+
+      client_session_keep_alive: false
+
+      query_tag: ACT_DBT_DEV

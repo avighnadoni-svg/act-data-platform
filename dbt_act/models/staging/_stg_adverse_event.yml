@@ -1,0 +1,139 @@
+version: 2
+
+models:
+
+  - name: stg_adverse_event
+
+    description: >
+      Clean staging view over
+      ACT_DB.RAW.RAW_ADVERSE_EVENT_CURRENT.
+      Grain is one row per STUDY_ID + AE_ID.
+
+    data_tests:
+
+      # Composite business-key uniqueness
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - ae_id
+
+      # Reported date must be same as or later than event date
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          arguments:
+            column_A: reported_date
+            column_B: event_date
+            or_equal: true
+            row_condition: >
+              reported_date is not null
+              and event_date is not null
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: ae_key
+        description: Technical key generated from STUDY_ID + AE_ID.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: subject_key
+        description: Parent subject technical key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_subject')
+                field: subject_key
+
+      - name: study_key
+        description: Parent study technical key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_study')
+                field: study_key
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_tests:
+          - not_null
+
+      - name: ae_id
+        data_tests:
+          - not_null
+
+      - name: subject_id
+        data_tests:
+          - not_null
+
+      # ==========================================================
+      # AE ATTRIBUTES
+      # ==========================================================
+
+      - name: event_term
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+      - name: severity
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - MILD
+                  - MODERATE
+                  - SEVERE
+
+      - name: serious
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - Y
+                  - N
+
+      - name: event_date
+
+      - name: reported_date
+
+      - name: processing_priority
+
+      - name: requires_safety_review
+
+      # ==========================================================
+      # TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+
+      - name: record_hash
+
+      - name: source_system
+
+      - name: source_entity
+
+      - name: dag_run_id
+
+      - name: ingested_at
+
+      - name: source_file_name
+
+      - name: source_file_row_number
+
+      - name: source_file_content_key
+
+      - name: source_file_last_modified
+
+      - name: snowflake_load_ts
+
+      - name: current_row_updated_at

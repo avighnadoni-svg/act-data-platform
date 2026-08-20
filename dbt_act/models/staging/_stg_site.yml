@@ -1,0 +1,135 @@
+version: 2
+
+models:
+
+  - name: stg_site
+
+    description: >
+      Clean staging view over ACT_DB.RAW.RAW_SITE_CURRENT.
+      Grain is one row per STUDY_ID + SITE_ID.
+
+    # ============================================================
+    # MODEL-LEVEL TESTS
+    # ============================================================
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - site_id
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: site_key
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + SITE_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: study_key
+        description: >
+          Deterministic study key generated from STUDY_ID.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('stg_study')
+                field: study_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        description: Parent clinical-study identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        description: Site business identifier.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # SITE ATTRIBUTES
+      # ==========================================================
+
+      - name: country
+        description: Country in which the clinical site operates.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: investigator
+        description: Investigator associated with the site.
+
+
+      - name: target_enrollment
+        description: Planned enrollment target for the site.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                row_condition: "target_enrollment is not null"
+
+
+      # ==========================================================
+      # TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        description: Source-system update timestamp.
+
+      - name: record_hash
+        description: RAW business-content hash.
+
+      - name: source_system
+        description: Source-system identifier.
+
+      - name: source_entity
+        description: Source entity identifier.
+
+      - name: dag_run_id
+        description: Airflow DAG run responsible for ingestion.
+
+      - name: ingested_at
+        description: ACT ingestion timestamp.
+
+      - name: source_file_name
+        description: S3 source file name.
+
+      - name: source_file_row_number
+        description: Row number inside the source file.
+
+      - name: source_file_content_key
+        description: Snowflake source-file content key.
+
+      - name: source_file_last_modified
+        description: Source-file last-modified timestamp.
+
+      - name: snowflake_load_ts
+        description: Snowflake RAW load timestamp.
+
+      - name: current_row_updated_at
+        description: Timestamp when RAW_SITE_CURRENT was maintained.

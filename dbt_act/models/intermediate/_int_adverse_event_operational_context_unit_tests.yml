@@ -1,0 +1,244 @@
+version: 2
+
+unit_tests:
+
+  # ============================================================
+  # TEST 1
+  #
+  # Verify that visit/lab/deviation/query records are aggregated
+  # correctly to ONE adverse-event row.
+  # ============================================================
+
+  - name: test_ae_operational_context_aggregations
+
+    description: >
+      Verify that ACT operational context correctly aggregates
+      visit, lab, protocol-deviation and data-query information
+      for an adverse-event subject.
+
+    model: int_adverse_event_operational_context
+
+    given:
+
+      # ----------------------------------------------------------
+      # BASE ADVERSE EVENT
+      # ----------------------------------------------------------
+
+      - input: ref('int_adverse_event_context')
+        format: dict
+        rows:
+
+          - study_id: ONC101
+            ae_id: AE001
+            subject_id: SUB001
+            event_term: Headache
+            severity: MODERATE
+            serious: N
+
+
+      # ----------------------------------------------------------
+      # VISITS
+      #
+      # Expected:
+      # visit_count = 2
+      # latest_actual_visit_date = 2026-08-10
+      # latest_planned_visit_date = 2026-08-11
+      # ----------------------------------------------------------
+
+      - input: ref('stg_visit')
+        format: dict
+        rows:
+
+          - study_id: ONC101
+            subject_id: SUB001
+            visit_id: VIS001
+            planned_date: 2026-08-01
+            actual_date: 2026-08-01
+
+          - study_id: ONC101
+            subject_id: SUB001
+            visit_id: VIS002
+            planned_date: 2026-08-11
+            actual_date: 2026-08-10
+
+
+      # ----------------------------------------------------------
+      # LAB RESULTS
+      #
+      # Expected:
+      # lab_result_count = 3
+      # abnormal_lab_count = 2
+      # ----------------------------------------------------------
+
+      - input: ref('stg_lab_result')
+        format: dict
+        rows:
+
+          - study_id: ONC101
+            subject_id: SUB001
+            lab_id: LAB001
+            abnormal: true
+
+          - study_id: ONC101
+            subject_id: SUB001
+            lab_id: LAB002
+            abnormal: false
+
+          - study_id: ONC101
+            subject_id: SUB001
+            lab_id: LAB003
+            abnormal: true
+
+
+      # ----------------------------------------------------------
+      # PROTOCOL DEVIATIONS
+      #
+      # Expected:
+      # total    = 3
+      # MAJOR    = 1
+      # CRITICAL = 1
+      # ----------------------------------------------------------
+
+      - input: ref('stg_protocol_deviation')
+        format: dict
+        rows:
+
+          - study_id: ONC101
+            subject_id: SUB001
+            deviation_id: PD001
+            severity: MAJOR
+
+          - study_id: ONC101
+            subject_id: SUB001
+            deviation_id: PD002
+            severity: CRITICAL
+
+          - study_id: ONC101
+            subject_id: SUB001
+            deviation_id: PD003
+            severity: MINOR
+
+
+      # ----------------------------------------------------------
+      # DATA QUERIES
+      #
+      # Expected:
+      # data_query_count       = 3
+      # unresolved_query_count = 2
+      # ----------------------------------------------------------
+
+      - input: ref('stg_data_query')
+        format: dict
+        rows:
+
+          - study_id: ONC101
+            subject_id: SUB001
+            query_id: DQ001
+            resolved_date: null
+
+          - study_id: ONC101
+            subject_id: SUB001
+            query_id: DQ002
+            resolved_date: 2026-08-05
+
+          - study_id: ONC101
+            subject_id: SUB001
+            query_id: DQ003
+            resolved_date: null
+
+
+    expect:
+
+      format: dict
+
+      rows:
+
+        - study_id: ONC101
+          ae_id: AE001
+          subject_id: SUB001
+
+          visit_count: 2
+          latest_actual_visit_date: 2026-08-10
+          latest_planned_visit_date: 2026-08-11
+
+          lab_result_count: 3
+          abnormal_lab_count: 2
+
+          protocol_deviation_count: 3
+          major_deviation_count: 1
+          critical_deviation_count: 1
+
+          data_query_count: 3
+          unresolved_query_count: 2
+
+
+  # ============================================================
+  # TEST 2
+  #
+  # Edge case:
+  # AE exists but there are NO visit/lab/PD/query records.
+  #
+  # Our COALESCE logic should return ZERO counts,
+  # not NULL.
+  # ============================================================
+
+  - name: test_ae_operational_context_no_related_records
+
+    description: >
+      Verify that an adverse event without related operational
+      records returns zero counts rather than NULL values.
+
+    model: int_adverse_event_operational_context
+
+    given:
+
+      - input: ref('int_adverse_event_context')
+        format: dict
+        rows:
+
+          - study_id: ONC102
+            ae_id: AE10201
+            subject_id: SUB10201
+
+
+      - input: ref('stg_visit')
+        format: dict
+        rows: []
+
+
+      - input: ref('stg_lab_result')
+        format: dict
+        rows: []
+
+
+      - input: ref('stg_protocol_deviation')
+        format: dict
+        rows: []
+
+
+      - input: ref('stg_data_query')
+        format: dict
+        rows: []
+
+
+    expect:
+
+      format: dict
+
+      rows:
+
+        - study_id: ONC102
+          ae_id: AE10201
+          subject_id: SUB10201
+
+          visit_count: 0
+
+          lab_result_count: 0
+          abnormal_lab_count: 0
+
+          protocol_deviation_count: 0
+          major_deviation_count: 0
+          critical_deviation_count: 0
+
+          data_query_count: 0
+          unresolved_query_count: 0

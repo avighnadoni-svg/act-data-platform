@@ -1,0 +1,494 @@
+version: 2
+
+sources:
+
+  - name: act_raw
+
+    description: >
+      Snowflake ACT RAW current-state tables.
+      dbt staging models read from RAW_*_CURRENT tables.
+
+    database: ACT_DB
+    schema: RAW
+
+    # ============================================================
+    # SOURCE FRESHNESS
+    #
+    # All RAW_*_CURRENT tables contain SNOWFLAKE_LOAD_TS.
+    # These settings are inherited by every table below.
+    # ============================================================
+
+    config:
+
+      loaded_at_field: SNOWFLAKE_LOAD_TS
+
+      freshness:
+
+        warn_after:
+          count: 8
+          period: hour
+
+        error_after:
+          count: 14
+          period: hour
+
+
+    tables:
+
+      # ============================================================
+      # STUDY
+      # ============================================================
+
+      - name: study
+        identifier: RAW_STUDY_CURRENT
+
+        description: >
+          Current study data.
+          Grain is one row per STUDY_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+              - unique
+
+          - name: STUDY_NAME
+
+          - name: PHASE
+
+          - name: TARGET_SUBJECTS
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # SITE
+      # ============================================================
+
+      - name: site
+        identifier: RAW_SITE_CURRENT
+
+        description: >
+          Current site data.
+          Grain is one row per STUDY_ID + SITE_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: SITE_ID
+            data_tests:
+              - not_null
+
+          - name: COUNTRY
+
+          - name: INVESTIGATOR
+
+          - name: TARGET_ENROLLMENT
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # SUBJECT
+      # ============================================================
+
+      - name: subject
+        identifier: RAW_SUBJECT_CURRENT
+
+        description: >
+          Current subject data.
+          Grain is one row per STUDY_ID + SUBJECT_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: SUBJECT_ID
+            data_tests:
+              - not_null
+
+          - name: SITE_ID
+            data_tests:
+              - not_null
+
+          - name: GENDER
+
+          - name: AGE
+
+          - name: STATUS
+
+          - name: ENROLLMENT_DATE
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # VISIT
+      # ============================================================
+
+      - name: visit
+        identifier: RAW_VISIT_CURRENT
+
+        description: >
+          Current visit data.
+          Grain is one row per STUDY_ID + VISIT_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: VISIT_ID
+            data_tests:
+              - not_null
+
+          - name: SUBJECT_ID
+            data_tests:
+              - not_null
+
+          - name: VISIT_NAME
+
+          - name: PLANNED_DATE
+
+          - name: ACTUAL_DATE
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # ADVERSE EVENT
+      # ============================================================
+
+      - name: adverse_event
+        identifier: RAW_ADVERSE_EVENT_CURRENT
+
+        description: >
+          Current adverse-event data.
+          Grain is one row per STUDY_ID + AE_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: AE_ID
+            data_tests:
+              - not_null
+
+          - name: SUBJECT_ID
+            data_tests:
+              - not_null
+
+          - name: EVENT_TERM
+
+          - name: SEVERITY
+
+          - name: SERIOUS
+
+          - name: EVENT_DATE
+
+          - name: REPORTED_DATE
+
+          - name: PROCESSING_PRIORITY
+
+          - name: REQUIRES_SAFETY_REVIEW
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # LAB RESULT
+      # ============================================================
+
+      - name: lab_result
+        identifier: RAW_LAB_RESULT_CURRENT
+
+        description: >
+          Current lab-result data.
+          Grain is one row per STUDY_ID + LAB_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: LAB_ID
+            data_tests:
+              - not_null
+
+          - name: SUBJECT_ID
+            data_tests:
+              - not_null
+
+          - name: TEST_NAME
+
+          - name: RESULT_VALUE
+
+          - name: NORMAL_LOW
+
+          - name: NORMAL_HIGH
+
+          - name: INTERPRETATION
+
+          - name: ABNORMAL
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # PROTOCOL DEVIATION
+      # ============================================================
+
+      - name: protocol_deviation
+        identifier: RAW_PROTOCOL_DEVIATION_CURRENT
+
+        description: >
+          Current protocol-deviation data.
+          Grain is one row per STUDY_ID + DEVIATION_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: DEVIATION_ID
+            data_tests:
+              - not_null
+
+          - name: SUBJECT_ID
+
+          - name: SITE_ID
+
+          - name: DEVIATION_TYPE
+
+          - name: SEVERITY
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT
+
+
+      # ============================================================
+      # DATA QUERY
+      # ============================================================
+
+      - name: data_query
+        identifier: RAW_DATA_QUERY_CURRENT
+
+        description: >
+          Current data-query data.
+          Grain is one row per STUDY_ID + QUERY_ID.
+
+        columns:
+
+          - name: STUDY_ID
+            data_tests:
+              - not_null
+
+          - name: QUERY_ID
+            data_tests:
+              - not_null
+
+          - name: SUBJECT_ID
+            data_tests:
+              - not_null
+
+          - name: SITE_ID
+            data_tests:
+              - not_null
+
+          - name: OPENED_DATE
+            data_tests:
+              - not_null
+
+          - name: RESOLVED_DATE
+
+          - name: STATUS
+            data_tests:
+              - not_null
+
+          - name: UPDATED_AT
+
+          - name: RECORD_HASH
+
+          - name: SOURCE_SYSTEM
+
+          - name: SOURCE_ENTITY
+
+          - name: DAG_RUN_ID
+
+          - name: INGESTED_AT
+
+          - name: SOURCE_FILE_NAME
+
+          - name: SOURCE_FILE_ROW_NUMBER
+
+          - name: SOURCE_FILE_CONTENT_KEY
+
+          - name: SOURCE_FILE_LAST_MODIFIED
+
+          - name: SNOWFLAKE_LOAD_TS
+
+          - name: CURRENT_ROW_UPDATED_AT

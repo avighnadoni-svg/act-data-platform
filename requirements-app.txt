@@ -3,3 +3,4 @@ pandas
 boto3
 python-dotenv
 snowflake-connector-python
+dbt-snowflake

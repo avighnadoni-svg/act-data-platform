@@ -1,0 +1,70 @@
+version: 2
+
+models:
+
+  - name: int_subject_context
+
+    description: >
+      Reusable subject-level clinical context combining subject,
+      site and study information. Grain is one row per
+      STUDY_ID + SUBJECT_ID.
+
+    columns:
+
+      - name: study_id
+        description: Clinical-study identifier.
+        data_tests:
+          - not_null
+
+      - name: study_name
+        description: Clinical-study name.
+        data_tests:
+          - not_null
+
+      - name: phase
+        description: Clinical-trial phase.
+
+      - name: target_subjects
+        description: Study-level target subject count.
+
+      - name: site_id
+        description: Site associated with the subject.
+        data_tests:
+          - not_null
+
+      - name: country
+        description: Country of the clinical site.
+        data_tests:
+          - not_null
+
+      - name: investigator
+        description: Investigator associated with the site.
+
+      - name: target_enrollment
+        description: Site target enrollment.
+
+      - name: subject_id
+        description: Subject business identifier.
+        data_tests:
+          - not_null
+
+      - name: gender
+        description: Subject gender.
+
+      - name: age
+        description: Subject age.
+
+      - name: subject_status
+        description: Current subject status.
+
+      - name: enrollment_date
+        description: Subject enrollment date.
+
+      - name: subject_source_updated_at
+        description: Last source update timestamp for the subject.
+
+      - name: site_source_updated_at
+        description: Last source update timestamp for the site.
+
+      - name: study_source_updated_at
+        description: Last source update timestamp for the study.

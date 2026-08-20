@@ -1,0 +1,463 @@
+version: 2
+
+models:
+
+  - name: mart_ae_case
+
+    description: >
+      Governed business-facing ACT adverse-event case dataset.
+      Grain is one row per STUDY_ID + AE_ID.
+      The model combines adverse-event, subject, site, study,
+      visit, lab, protocol-deviation and data-query context.
+      Regulatory transfer eligibility is not determined here.
+
+    config:
+      contract:
+        enforced: true
+
+
+    # ============================================================
+    # MODEL LEVEL TESTS
+    # ============================================================
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - ae_id
+
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL CASE KEY
+      # ==========================================================
+
+      - name: ae_case_key
+        data_type: varchar
+
+        description: >
+          Deterministic ACT adverse-event case key generated
+          from STUDY_ID + AE_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+        description: Clinical-study business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: ae_id
+        data_type: varchar
+        description: Adverse-event business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        data_type: varchar
+        description: Subject associated with the adverse event.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_type: varchar
+        description: Clinical site associated with the subject.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # STUDY CONTEXT
+      # ==========================================================
+
+      - name: study_name
+        data_type: varchar
+        description: Clinical-study name.
+
+
+      - name: phase
+        data_type: varchar
+        description: Clinical-trial phase.
+
+
+      - name: target_subjects
+        data_type: number(38,0)
+        description: Planned subject target for the study.
+
+
+      # ==========================================================
+      # SITE CONTEXT
+      # ==========================================================
+
+      - name: country
+        data_type: varchar
+        description: Country of the clinical site.
+
+
+      - name: investigator
+        data_type: varchar
+        description: Investigator associated with the site.
+
+
+      - name: target_enrollment
+        data_type: number(38,0)
+        description: Planned enrollment target for the site.
+
+
+      # ==========================================================
+      # SUBJECT CONTEXT
+      # ==========================================================
+
+      - name: gender
+        data_type: varchar
+        description: Subject gender.
+
+
+      - name: age
+        data_type: number(38,0)
+        description: Subject age.
+
+
+      - name: subject_status
+        data_type: varchar
+        description: Current subject status.
+
+
+      - name: enrollment_date
+        data_type: date
+        description: Subject enrollment date.
+
+
+      # ==========================================================
+      # ADVERSE EVENT
+      # ==========================================================
+
+      - name: event_term
+        data_type: varchar
+        description: Reported adverse-event term.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: severity
+        data_type: varchar
+        description: Adverse-event severity.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - MILD
+                  - MODERATE
+                  - SEVERE
+
+
+      - name: serious
+        data_type: varchar
+        description: Seriousness indicator.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - Y
+                  - N
+
+
+      - name: event_date
+        data_type: date
+        description: Date when the adverse event occurred.
+
+
+      - name: reported_date
+        data_type: date
+        description: Date when the adverse event was reported.
+
+
+      - name: processing_priority
+        data_type: varchar
+        description: ACT processing priority.
+
+
+      - name: requires_safety_review
+        data_type: boolean
+
+        description: >
+          Indicates whether the adverse event requires
+          safety review.
+
+
+      # ==========================================================
+      # REPORTING METRICS
+      # ==========================================================
+
+      - name: reporting_delay_days
+        data_type: number(38,0)
+
+        description: >
+          Calendar-day difference between EVENT_DATE
+          and REPORTED_DATE.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                row_condition: >
+                  reporting_delay_days is not null
+
+
+      # ==========================================================
+      # VISIT CONTEXT
+      # ==========================================================
+
+      - name: visit_count
+        data_type: number(38,0)
+
+        description: >
+          Number of current visit records associated
+          with the subject.
+
+        data_tests:
+          - not_null
+
+
+      - name: latest_actual_visit_date
+        data_type: date
+        description: Latest actual visit date for the subject.
+
+
+      - name: latest_planned_visit_date
+        data_type: date
+        description: Latest planned visit date for the subject.
+
+
+      # ==========================================================
+      # LAB CONTEXT
+      # ==========================================================
+
+      - name: lab_result_count
+        data_type: number(38,0)
+
+        description: >
+          Number of current laboratory results associated
+          with the subject.
+
+        data_tests:
+          - not_null
+
+
+      - name: abnormal_lab_count
+        data_type: number(38,0)
+
+        description: >
+          Number of lab results currently marked abnormal.
+
+        data_tests:
+          - not_null
+
+
+      - name: has_abnormal_lab
+        data_type: boolean
+
+        description: >
+          TRUE when at least one abnormal laboratory
+          result exists for the subject.
+
+
+      # ==========================================================
+      # PROTOCOL DEVIATION CONTEXT
+      # ==========================================================
+
+      - name: protocol_deviation_count
+        data_type: number(38,0)
+
+        description: >
+          Number of protocol deviations associated
+          with the subject.
+
+        data_tests:
+          - not_null
+
+
+      - name: major_deviation_count
+        data_type: number(38,0)
+
+        description: >
+          Number of protocol deviations having
+          severity MAJOR.
+
+        data_tests:
+          - not_null
+
+
+      - name: critical_deviation_count
+        data_type: number(38,0)
+
+        description: >
+          Number of protocol deviations having
+          severity CRITICAL.
+
+        data_tests:
+          - not_null
+
+
+      - name: has_protocol_deviation
+        data_type: boolean
+
+        description: >
+          TRUE when at least one protocol deviation
+          exists for the subject.
+
+
+      - name: has_critical_deviation
+        data_type: boolean
+
+        description: >
+          TRUE when at least one CRITICAL protocol
+          deviation exists for the subject.
+
+
+      # ==========================================================
+      # DATA QUERY CONTEXT
+      # ==========================================================
+
+      - name: data_query_count
+        data_type: number(38,0)
+
+        description: >
+          Number of current data queries associated
+          with the subject.
+
+        data_tests:
+          - not_null
+
+
+      - name: unresolved_query_count
+        data_type: number(38,0)
+
+        description: >
+          Number of data queries whose RESOLVED_DATE
+          is currently NULL.
+
+        data_tests:
+          - not_null
+
+
+      - name: has_unresolved_query
+        data_type: boolean
+
+        description: >
+          TRUE when at least one unresolved data query
+          exists for the subject.
+
+
+      # ==========================================================
+      # INCREMENTAL WATERMARK
+      # ==========================================================
+
+      - name: operational_context_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Latest source change affecting this adverse-event
+          operational context across adverse event, subject,
+          site, study, visit, lab result, protocol deviation
+          and data-query data.
+
+          Used as the dbt incremental processing watermark.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: ae_source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Latest source-system update timestamp
+          for the adverse event.
+
+
+      - name: subject_source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Latest source-system update timestamp
+          for the subject.
+
+
+      - name: site_source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Latest source-system update timestamp
+          for the site.
+
+
+      - name: study_source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Latest source-system update timestamp
+          for the study.
+
+
+      - name: record_hash
+        data_type: varchar
+        description: RAW adverse-event business-content hash.
+
+
+      - name: dag_run_id
+        data_type: varchar
+        description: Airflow DAG run responsible for ingestion.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+        description: Timestamp when ACT ingested the adverse event.
+
+
+      # ==========================================================
+      # DBT AUDIT COLUMNS
+      # ==========================================================
+
+      - name: dbt_created_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when the mart row was originally created.
+          Incremental MERGE updates preserve this value.
+
+
+      - name: dbt_updated_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt most recently inserted
+          or updated the mart row.

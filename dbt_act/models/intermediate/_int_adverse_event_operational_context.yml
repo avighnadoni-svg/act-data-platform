@@ -1,0 +1,134 @@
+version: 2
+
+models:
+
+  - name: int_adverse_event_operational_context
+
+    description: >
+      Adverse-event-level operational context combining AE,
+      subject, site and study information with aggregated visit,
+      lab, protocol-deviation and data-query signals.
+      Grain is one row per STUDY_ID + AE_ID.
+
+    columns:
+
+      - name: study_id
+        description: Clinical-study identifier.
+        data_tests:
+          - not_null
+
+      - name: ae_id
+        description: Adverse-event identifier.
+        data_tests:
+          - not_null
+
+      - name: subject_id
+        description: Subject associated with the adverse event.
+        data_tests:
+          - not_null
+
+      - name: event_term
+        description: Reported adverse-event term.
+        data_tests:
+          - not_null
+
+      - name: severity
+        description: Adverse-event severity.
+
+      - name: serious
+        description: Seriousness indicator.
+
+      - name: event_date
+        description: Date on which the adverse event occurred.
+
+      - name: reported_date
+        description: Date on which the adverse event was reported.
+
+      - name: processing_priority
+        description: ACT processing priority.
+
+      - name: requires_safety_review
+        description: Indicates whether safety review is required.
+
+      - name: site_id
+        description: Site associated with the subject.
+
+      - name: gender
+        description: Subject gender.
+
+      - name: age
+        description: Subject age.
+
+      - name: subject_status
+        description: Current subject status.
+
+      - name: enrollment_date
+        description: Subject enrollment date.
+
+      - name: country
+        description: Country of the clinical site.
+
+      - name: investigator
+        description: Investigator associated with the site.
+
+      - name: study_name
+        description: Clinical-study name.
+
+      - name: phase
+        description: Clinical-trial phase.
+
+      - name: visit_count
+        description: Number of current visit records for the subject.
+        data_tests:
+          - not_null
+
+      - name: latest_actual_visit_date
+        description: Latest actual visit date for the subject.
+
+      - name: latest_planned_visit_date
+        description: Latest planned visit date for the subject.
+
+      - name: lab_result_count
+        description: Number of current laboratory results for the subject.
+        data_tests:
+          - not_null
+
+      - name: abnormal_lab_count
+        description: Number of lab results marked abnormal.
+        data_tests:
+          - not_null
+
+      - name: protocol_deviation_count
+        description: Number of protocol deviations associated with the subject.
+        data_tests:
+          - not_null
+
+      - name: major_deviation_count
+        description: Number of MAJOR protocol deviations.
+
+      - name: critical_deviation_count
+        description: Number of CRITICAL protocol deviations.
+
+      - name: data_query_count
+        description: Number of data queries associated with the subject.
+        data_tests:
+          - not_null
+
+      - name: unresolved_query_count
+        description: >
+          Number of data queries for which RESOLVED_DATE
+          is currently NULL.
+        data_tests:
+          - not_null
+
+      - name: ae_source_updated_at
+        description: Last source update timestamp for the AE.
+
+      - name: record_hash
+        description: RAW adverse-event business-content hash.
+
+      - name: dag_run_id
+        description: Airflow ingestion DAG run identifier.
+
+      - name: ingested_at
+        description: ACT ingestion timestamp.

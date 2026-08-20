@@ -3,33 +3,43 @@
 -- File: snowflake/sql/001_create_foundation.sql
 --
 -- Purpose:
---   Create the core ACT Snowflake database and schemas.
+--   Create the core Snowflake database and schemas used by ACT.
 --
--- Design:
---   RAW
---     - RAW landing tables
---     - External stage object
---     - Named file formats used to load RAW data
+-- Architecture:
 --
---   CONTROL
---     - Load audit / control metadata
---     - Snowflake-side operational metadata added later
+--   ACT_DB
+--      |
+--      +-- RAW
+--      |    |
+--      |    +-- internal RAW stage
+--      |    +-- landing tables
+--      |    +-- RAW history tables
+--      |    +-- RAW current tables
+--      |
+--      +-- CONTROL
+--           |
+--           +-- pipeline audit
+--           +-- entity audit
+--           +-- watermark
+--           +-- reprocess audit
 --
--- Note:
---   There is intentionally NO separate STAGE schema.
---   Snowflake separates Tables, Stages, and File Formats as different object
---   types inside the RAW schema.
+-- Storage is intentionally independent from AWS.
 -- ============================================================================
 
 USE ROLE ACCOUNTADMIN;
 
+
 CREATE DATABASE IF NOT EXISTS ACT_DB
     COMMENT = 'ACT clinical data platform';
 
+
 CREATE SCHEMA IF NOT EXISTS ACT_DB.RAW
-    COMMENT = 'ACT raw landing tables plus RAW ingestion stage/file-format objects';
+    COMMENT = 'ACT RAW ingestion and current/history data layer';
+
 
 CREATE SCHEMA IF NOT EXISTS ACT_DB.CONTROL
-    COMMENT = 'ACT operational control and load-audit objects';
+    COMMENT = 'ACT operational control, watermark and audit layer';
 
-SHOW SCHEMAS IN DATABASE ACT_DB;
+
+SHOW SCHEMAS
+IN DATABASE ACT_DB;

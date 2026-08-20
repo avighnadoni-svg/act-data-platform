@@ -113,7 +113,7 @@ FROM
         METADATA$FILE_LAST_MODIFIED,
         METADATA$START_SCAN_TIME
 
-    FROM @ACT_DB.RAW.ACT_RAW_S3_STAGE
+    FROM @ACT_DB.RAW.ACT_RAW_STAGE
     (
         PATTERN => '.*adverse_event/.*/adverse_event[.]csv'
     ) t

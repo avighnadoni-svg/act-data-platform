@@ -4,9 +4,9 @@
 --
 -- Flow:
 --
---   S3
---    |
---    v
+--   ACT_RAW_STAGE
+--        |
+--        v
 --   COPY INTO LND_SUBJECT
 --    |
 --    +--> HISTORY MERGE
@@ -93,7 +93,7 @@ FROM
         METADATA$FILE_LAST_MODIFIED,
         METADATA$START_SCAN_TIME
 
-    FROM @ACT_DB.RAW.ACT_RAW_S3_STAGE
+    FROM @ACT_DB.RAW.ACT_RAW_STAGE
     (
         PATTERN => '.*subject/.*/subject[.]csv'
     ) t
@@ -115,7 +115,10 @@ SET RECORD_HASH =
             COALESCE(GENDER, '<NULL>'),
             COALESCE(TO_VARCHAR(AGE), '<NULL>'),
             COALESCE(STATUS, '<NULL>'),
-            COALESCE(TO_VARCHAR(ENROLLMENT_DATE, 'YYYY-MM-DD'), '<NULL>')
+            COALESCE(
+                TO_VARCHAR(ENROLLMENT_DATE, 'YYYY-MM-DD'),
+                '<NULL>'
+            )
         ),
         256
     )
@@ -296,9 +299,15 @@ AND
     OR T.UPDATED_AT <> S.UPDATED_AT
 )
 AND
-    COALESCE(S.INGESTED_AT, S.SNOWFLAKE_LOAD_TS)
+    COALESCE(
+        S.INGESTED_AT,
+        S.SNOWFLAKE_LOAD_TS
+    )
     >=
-    COALESCE(T.INGESTED_AT, T.SNOWFLAKE_LOAD_TS)
+    COALESCE(
+        T.INGESTED_AT,
+        T.SNOWFLAKE_LOAD_TS
+    )
 
 THEN UPDATE SET
     T.SITE_ID = S.SITE_ID,
@@ -417,6 +426,7 @@ ORDER BY STUDY_ID;
 
 
 -- Must return zero rows.
+
 SELECT
     STUDY_ID,
     SUBJECT_ID,

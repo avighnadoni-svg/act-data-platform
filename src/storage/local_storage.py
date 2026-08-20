@@ -1,30 +1,27 @@
-# src/aws/s3_client.py
+# src/storage/local_storage.py
 
 import hashlib
-import io
 import os
 import re
-from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
-import boto3
 import pandas as pd
-from botocore.exceptions import (
-    BotoCoreError,
-    ClientError,
-)
 
 from config.endpoints import ENDPOINTS
 
 from src.common.exceptions import (
     ConfigurationError,
     DataValidationError,
-    S3UploadError,
-    S3ValidationError,
+    StorageValidationError,
+    StorageWriteError,
 )
 
-from src.common.logging_config import (
-    get_logger,
+from src.common.logging_config import get_logger
+
+from src.storage.storage_backend import (
+    StorageBackend,
+    StorageWriteResult,
 )
 
 
@@ -32,66 +29,62 @@ logger = get_logger(__name__)
 
 
 # ============================================================
-# UPLOAD RESULT
+# PROJECT ROOT
 # ============================================================
 
-@dataclass
-class S3UploadResult:
-    """
-    Metadata returned after successful S3 processing.
-    """
-
-    entity_name: str
-
-    study_id: str
-
-    uploaded: bool
-
-    record_count: int
-
-    bucket_name: str | None
-
-    s3_key: str | None
-
-    s3_uri: str | None
-
-    checksum: str | None
-
-    file_size_bytes: int
-
-    run_id: str
-
-    load_date: str
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ============================================================
-# ENVIRONMENT CONFIGURATION
+# LOCAL STORAGE ROOT
 # ============================================================
 
-S3_BUCKET_NAME = os.getenv(
-    "S3_BUCKET_NAME"
-)
-
-AWS_REGION = os.getenv(
-    "AWS_DEFAULT_REGION",
-    "ap-south-1",
+DEFAULT_LOCAL_STORAGE_ROOT = (
+    PROJECT_ROOT
+    / "data"
+    / "raw"
 )
 
 
-# ============================================================
-# CONFIGURATION VALIDATION
-# ============================================================
-
-def _validate_configuration() -> None:
+def _get_storage_root() -> Path:
     """
-    Validate mandatory S3 configuration.
+    Resolve the local RAW storage directory.
+
+    Default:
+
+        <project>/data/raw
+
+    Optional environment override:
+
+        LOCAL_STORAGE_ROOT=/some/path
+
+    Relative paths are resolved from the project root,
+    not from the current terminal working directory.
     """
 
-    if not S3_BUCKET_NAME:
+    configured_root = os.getenv(
+        "LOCAL_STORAGE_ROOT"
+    )
 
-        raise ConfigurationError(
-            "S3_BUCKET_NAME environment variable is missing"
-        )
+    if not configured_root:
+
+        return DEFAULT_LOCAL_STORAGE_ROOT.resolve()
+
+
+    configured_path = Path(
+        configured_root
+    ).expanduser()
+
+
+    if configured_path.is_absolute():
+
+        return configured_path.resolve()
+
+
+    return (
+        PROJECT_ROOT
+        / configured_path
+    ).resolve()
 
 
 # ============================================================
@@ -102,14 +95,22 @@ def _validate_entity(
     entity_name: str,
 ) -> dict:
     """
-    Validate entity exists in endpoint configuration.
+    Verify the requested entity exists in ENDPOINTS.
     """
+
+    if not entity_name:
+
+        raise ConfigurationError(
+            "entity_name cannot be empty"
+        )
+
 
     if entity_name not in ENDPOINTS:
 
         raise ConfigurationError(
             f"Unknown entity={entity_name}"
         )
+
 
     return ENDPOINTS[
         entity_name
@@ -124,15 +125,7 @@ def _sanitize_study_id(
     study_id: str,
 ) -> str:
     """
-    Make study_id safe for S3 key.
-
-    Example:
-
-        ONC101
-
-    remains:
-
-        ONC101
+    Make study_id safe for a filesystem path.
     """
 
     if not study_id:
@@ -141,11 +134,13 @@ def _sanitize_study_id(
             "study_id cannot be empty"
         )
 
+
     cleaned = re.sub(
         r"[^A-Za-z0-9_.\-]",
         "-",
         study_id.strip(),
     )
+
 
     if not cleaned:
 
@@ -155,6 +150,7 @@ def _sanitize_study_id(
                 "after sanitization"
             )
         )
+
 
     return cleaned
 
@@ -167,15 +163,15 @@ def _sanitize_run_id(
     run_id: str,
 ) -> str:
     """
-    Convert Airflow run_id into an S3-safe value.
+    Convert Airflow run_id into a filesystem-safe value.
 
     Example:
 
-        scheduled__2026-08-16T10:00:00+00:00
+        scheduled__2026-08-20T10:00:00+00:00
 
     becomes:
 
-        scheduled__2026-08-16T10-00-00+00-00
+        scheduled__2026-08-20T10-00-00+00-00
     """
 
     if not run_id:
@@ -184,11 +180,23 @@ def _sanitize_run_id(
             "run_id cannot be empty"
         )
 
+
     cleaned = re.sub(
         r"[^A-Za-z0-9_.+\-=]",
         "-",
         run_id.strip(),
     )
+
+
+    if not cleaned:
+
+        raise ConfigurationError(
+            (
+                "run_id became empty "
+                "after sanitization"
+            )
+        )
+
 
     return cleaned
 
@@ -201,7 +209,7 @@ def _validate_load_date(
     load_date: str,
 ) -> str:
     """
-    Ensure load_date follows YYYY-MM-DD.
+    Ensure load_date uses YYYY-MM-DD.
     """
 
     try:
@@ -212,6 +220,7 @@ def _validate_load_date(
         )
 
         return load_date
+
 
     except ValueError as exc:
 
@@ -225,39 +234,105 @@ def _validate_load_date(
 
 
 # ============================================================
+# STORAGE PREFIX
+# ============================================================
+
+def _get_storage_prefix(
+    entity_name: str,
+) -> str:
+    """
+    Return the logical storage folder for an entity.
+
+    During migration the existing config still contains:
+
+        s3_prefix
+
+    Later we will rename it to:
+
+        storage_prefix
+
+    The fallback keeps this file compatible while we
+    migrate the repository one file at a time.
+    """
+
+    config = _validate_entity(
+        entity_name
+    )
+
+
+    prefix = (
+        config.get(
+            "storage_prefix"
+        )
+        or config.get(
+            "s3_prefix"
+        )
+    )
+
+
+    if not prefix:
+
+        raise ConfigurationError(
+            (
+                "Storage prefix missing "
+                f"for entity={entity_name}"
+            )
+        )
+
+
+    cleaned = re.sub(
+        r"[^A-Za-z0-9_.\-]",
+        "-",
+        str(prefix).strip(),
+    )
+
+
+    if not cleaned:
+
+        raise ConfigurationError(
+            (
+                "Storage prefix became empty "
+                f"for entity={entity_name}"
+            )
+        )
+
+
+    return cleaned
+
+
+# ============================================================
 # STUDY PARTITION VALIDATION
 # ============================================================
 
 def _validate_study_partition(
     entity_name: str,
     study_id: str,
-    df: pd.DataFrame,
+    dataframe: pd.DataFrame,
 ) -> None:
     """
-    Protect against accidentally writing records
-    from another study into the wrong S3 partition.
+    Protect against writing records from another study
+    into the requested study partition.
 
     Example:
 
-        requested partition = ONC101
+        requested partition:
 
-    but DataFrame contains:
+            ONC101
 
-        ONC101
-        ONC102
+        DataFrame contains:
 
-    The upload must fail.
+            ONC101
+            ONC102
+
+        The write must fail.
     """
 
-    if df.empty:
+    if dataframe.empty:
+
         return
 
 
-    # --------------------------------------------------------
-    # study_id must exist
-    # --------------------------------------------------------
-
-    if "study_id" not in df.columns:
+    if "study_id" not in dataframe.columns:
 
         raise DataValidationError(
             (
@@ -267,11 +342,9 @@ def _validate_study_partition(
         )
 
 
-    # --------------------------------------------------------
-    # NULL study IDs are not allowed
-    # --------------------------------------------------------
-
-    if df["study_id"].isna().any():
+    if dataframe[
+        "study_id"
+    ].isna().any():
 
         raise DataValidationError(
             (
@@ -281,12 +354,10 @@ def _validate_study_partition(
         )
 
 
-    # --------------------------------------------------------
-    # Collect unique study IDs in DataFrame
-    # --------------------------------------------------------
-
     dataframe_studies = (
-        df["study_id"]
+        dataframe[
+            "study_id"
+        ]
         .astype(str)
         .str.strip()
         .unique()
@@ -294,11 +365,9 @@ def _validate_study_partition(
     )
 
 
-    # --------------------------------------------------------
-    # We expect exactly one study in each upload
-    # --------------------------------------------------------
-
-    if len(dataframe_studies) != 1:
+    if len(
+        dataframe_studies
+    ) != 1:
 
         logger.error(
             (
@@ -311,6 +380,7 @@ def _validate_study_partition(
             study_id,
             dataframe_studies,
         )
+
 
         raise DataValidationError(
             (
@@ -326,10 +396,6 @@ def _validate_study_partition(
     )
 
 
-    # --------------------------------------------------------
-    # Requested study must match DataFrame study
-    # --------------------------------------------------------
-
     if actual_study_id != study_id:
 
         logger.error(
@@ -344,6 +410,7 @@ def _validate_study_partition(
             actual_study_id,
         )
 
+
         raise DataValidationError(
             (
                 "Study partition mismatch. "
@@ -354,31 +421,28 @@ def _validate_study_partition(
 
 
 # ============================================================
-# BUILD S3 KEY
+# BUILD LOCAL FILE PATH
 # ============================================================
 
-def _build_s3_key(
+def _build_local_path(
+    storage_root: Path,
     entity_name: str,
     study_id: str,
     load_date: str,
     run_id: str,
-) -> str:
+) -> Path:
     """
-    Build deterministic S3 path.
+    Build deterministic local RAW file path.
 
     Example:
 
-        act/raw/
+        data/raw/
         study_id=ONC101/
         adverse_event/
-        load_date=2026-08-16/
+        load_date=2026-08-20/
         run_id=manual_test_001/
         adverse_event.csv
     """
-
-    config = _validate_entity(
-        entity_name
-    )
 
     safe_study_id = (
         _sanitize_study_id(
@@ -386,11 +450,13 @@ def _build_s3_key(
         )
     )
 
+
     safe_run_id = (
         _sanitize_run_id(
             run_id
         )
     )
+
 
     valid_load_date = (
         _validate_load_date(
@@ -398,46 +464,40 @@ def _build_s3_key(
         )
     )
 
-    entity_prefix = (
-        config["s3_prefix"]
+
+    storage_prefix = (
+        _get_storage_prefix(
+            entity_name
+        )
     )
 
 
     return (
-        "act/raw/"
-        f"study_id={safe_study_id}/"
-        f"{entity_prefix}/"
-        f"load_date={valid_load_date}/"
-        f"run_id={safe_run_id}/"
-        f"{entity_prefix}.csv"
+        storage_root
+        / f"study_id={safe_study_id}"
+        / storage_prefix
+        / f"load_date={valid_load_date}"
+        / f"run_id={safe_run_id}"
+        / f"{storage_prefix}.csv"
     )
 
 
 # ============================================================
-# DATAFRAME -> CSV
+# DATAFRAME -> CSV BYTES
 # ============================================================
 
-def _dataframe_to_csv(
-    df: pd.DataFrame,
+def _dataframe_to_csv_bytes(
+    dataframe: pd.DataFrame,
 ) -> bytes:
     """
-    Convert Pandas DataFrame directly into
-    UTF-8 CSV bytes in memory.
-
-    No temporary local file.
+    Convert DataFrame to deterministic UTF-8 CSV bytes.
     """
 
-    buffer = io.StringIO()
-
-    df.to_csv(
-        buffer,
+    csv_text = dataframe.to_csv(
         index=False,
         lineterminator="\n",
     )
 
-    csv_text = (
-        buffer.getvalue()
-    )
 
     return csv_text.encode(
         "utf-8"
@@ -449,238 +509,247 @@ def _dataframe_to_csv(
 # ============================================================
 
 def _calculate_checksum(
-    csv_bytes: bytes,
+    content: bytes,
 ) -> str:
     """
-    Calculate SHA-256 checksum.
+    Return SHA-256 checksum.
     """
 
     return hashlib.sha256(
-        csv_bytes
+        content
     ).hexdigest()
 
 
 # ============================================================
-# S3 CLIENT
+# LOCAL STORAGE BACKEND
 # ============================================================
 
-class ACTS3Client:
+class LocalStorageBackend(
+    StorageBackend
+):
     """
-    ACT S3 RAW landing client.
+    Local filesystem implementation of ACT storage.
 
     Responsibilities:
 
+    - entity validation
     - study-level partitioning
-    - entity partitioning
-    - run-level idempotency
-    - DataFrame -> CSV in memory
-    - S3 upload
-    - object verification
-    - SHA-256 checksum
+    - run-level idempotent path
+    - DataFrame -> CSV
+    - atomic local write
+    - file verification
+    - SHA-256 verification
     - structured logging
     """
 
+
     def __init__(
         self,
+        storage_root: str | Path | None = None,
     ):
 
-        _validate_configuration()
+        if storage_root is None:
+
+            self.storage_root = (
+                _get_storage_root()
+            )
+
+        else:
+
+            supplied_root = Path(
+                storage_root
+            ).expanduser()
 
 
-        self.bucket_name = (
-            S3_BUCKET_NAME
-        )
+            if supplied_root.is_absolute():
 
-        self.region = (
-            AWS_REGION
-        )
+                self.storage_root = (
+                    supplied_root.resolve()
+                )
+
+            else:
+
+                self.storage_root = (
+                    PROJECT_ROOT
+                    / supplied_root
+                ).resolve()
 
 
         try:
 
-            self.s3_client = boto3.client(
-                "s3",
-                region_name=self.region,
+            self.storage_root.mkdir(
+                parents=True,
+                exist_ok=True,
             )
 
 
-            logger.info(
-                (
-                    "s3_client_initialized "
-                    "region=%s "
-                    "bucket=%s"
-                ),
-                self.region,
-                self.bucket_name,
-            )
-
-
-        except Exception as exc:
+        except OSError as exc:
 
             logger.exception(
-                "s3_client_initialization_failed"
+                (
+                    "local_storage_initialization_failed "
+                    "storage_root=%s"
+                ),
+                self.storage_root,
             )
 
-            raise S3UploadError(
-                "Unable to initialize S3 client"
+
+            raise StorageWriteError(
+                (
+                    "Unable to create local "
+                    "storage directory "
+                    f"path={self.storage_root}"
+                )
             ) from exc
 
 
+        logger.info(
+            (
+                "local_storage_initialized "
+                "storage_root=%s"
+            ),
+            self.storage_root,
+        )
+
+
     # ========================================================
-    # VERIFY OBJECT
+    # BACKEND NAME
     # ========================================================
 
-    def _verify_upload(
+    @property
+    def backend_name(
         self,
-        s3_key: str,
+    ) -> str:
+
+        return "local"
+
+
+    # ========================================================
+    # VERIFY FILE
+    # ========================================================
+
+    def _verify_file(
+        self,
+        file_path: Path,
         expected_size: int,
         expected_checksum: str,
     ) -> None:
         """
-        Verify uploaded object using HEAD.
+        Verify:
 
-        Checks:
-
-        - object exists
-        - file size
-        - SHA-256 metadata
+        - file exists
+        - file size matches
+        - checksum matches
         """
 
-        try:
+        if not file_path.is_file():
 
-            response = (
-                self.s3_client.head_object(
-                    Bucket=self.bucket_name,
-                    Key=s3_key,
+            raise StorageValidationError(
+                (
+                    "Local file does not exist "
+                    f"path={file_path}"
                 )
             )
 
-
-        except (
-            ClientError,
-            BotoCoreError,
-        ) as exc:
-
-            logger.exception(
-                (
-                    "s3_verification_failed "
-                    "bucket=%s "
-                    "key=%s"
-                ),
-                self.bucket_name,
-                s3_key,
-            )
-
-            raise S3ValidationError(
-                (
-                    "Unable to verify S3 object "
-                    f"s3://{self.bucket_name}/{s3_key}"
-                )
-            ) from exc
-
-
-        # ----------------------------------------------------
-        # FILE SIZE
-        # ----------------------------------------------------
 
         actual_size = (
-            response.get(
-                "ContentLength",
-                -1,
-            )
+            file_path.stat().st_size
         )
 
 
         if actual_size != expected_size:
 
-            raise S3ValidationError(
+            raise StorageValidationError(
                 (
-                    "S3 file size mismatch. "
+                    "Local file size mismatch. "
                     f"expected={expected_size}, "
-                    f"actual={actual_size}"
+                    f"actual={actual_size}, "
+                    f"path={file_path}"
                 )
             )
 
 
-        # ----------------------------------------------------
-        # METADATA
-        # ----------------------------------------------------
+        try:
 
-        metadata = (
-            response.get(
-                "Metadata",
-                {},
+            actual_bytes = (
+                file_path.read_bytes()
             )
-        )
+
+
+        except OSError as exc:
+
+            raise StorageValidationError(
+                (
+                    "Unable to read local file "
+                    f"during verification "
+                    f"path={file_path}"
+                )
+            ) from exc
 
 
         actual_checksum = (
-            metadata.get(
-                "sha256"
+            _calculate_checksum(
+                actual_bytes
             )
         )
 
 
-        # ----------------------------------------------------
-        # CHECKSUM
-        # ----------------------------------------------------
-
         if actual_checksum != expected_checksum:
 
-            raise S3ValidationError(
+            raise StorageValidationError(
                 (
-                    "S3 checksum mismatch. "
+                    "Local checksum mismatch. "
                     f"expected={expected_checksum}, "
-                    f"actual={actual_checksum}"
+                    f"actual={actual_checksum}, "
+                    f"path={file_path}"
                 )
             )
 
 
         logger.info(
             (
-                "s3_upload_verified "
-                "bucket=%s "
-                "key=%s "
+                "local_storage_verified "
+                "path=%s "
                 "size_bytes=%s"
             ),
-            self.bucket_name,
-            s3_key,
+            file_path,
             actual_size,
         )
 
 
     # ========================================================
-    # UPLOAD
+    # WRITE DATAFRAME
     # ========================================================
 
-    def upload_dataframe(
+    def write_dataframe(
         self,
         entity_name: str,
         study_id: str,
-        df: pd.DataFrame,
+        dataframe: pd.DataFrame,
         run_id: str,
         load_date: str,
-    ) -> S3UploadResult:
+    ) -> StorageWriteResult:
         """
-        Upload one study + one entity DataFrame.
+        Persist one study + one entity DataFrame.
 
-        Important:
-
-        One call must contain data for only ONE study.
-
-        Example:
-
-            study_id = ONC101
-            entity   = adverse_event
+        One invocation may contain records for only
+        one study.
         """
 
         _validate_entity(
             entity_name
         )
 
+
         _sanitize_study_id(
             study_id
         )
+
+
+        _sanitize_run_id(
+            run_id
+        )
+
 
         _validate_load_date(
             load_date
@@ -691,14 +760,14 @@ class ACTS3Client:
             (
                 "entity=%s "
                 "study_id=%s "
-                "s3_upload_started "
+                "local_storage_write_started "
                 "record_count=%s "
                 "run_id=%s "
                 "load_date=%s"
             ),
             entity_name,
             study_id,
-            len(df),
+            len(dataframe),
             run_id,
             load_date,
         )
@@ -708,13 +777,13 @@ class ACTS3Client:
         # EMPTY INCREMENTAL BATCH
         # ====================================================
 
-        if df.empty:
+        if dataframe.empty:
 
             logger.info(
                 (
                     "entity=%s "
                     "study_id=%s "
-                    "s3_upload_skipped "
+                    "local_storage_write_skipped "
                     "reason=no_records"
                 ),
                 entity_name,
@@ -722,7 +791,7 @@ class ACTS3Client:
             )
 
 
-            return S3UploadResult(
+            return StorageWriteResult(
 
                 entity_name=
                     entity_name,
@@ -730,19 +799,19 @@ class ACTS3Client:
                 study_id=
                     study_id,
 
-                uploaded=
+                stored=
                     False,
 
                 record_count=
                     0,
 
-                bucket_name=
-                    self.bucket_name,
+                storage_backend=
+                    self.backend_name,
 
-                s3_key=
+                storage_path=
                     None,
 
-                s3_uri=
+                storage_uri=
                     None,
 
                 checksum=
@@ -764,9 +833,15 @@ class ACTS3Client:
         # ====================================================
 
         _validate_study_partition(
-            entity_name=entity_name,
-            study_id=study_id,
-            df=df,
+
+            entity_name=
+                entity_name,
+
+            study_id=
+                study_id,
+
+            dataframe=
+                dataframe,
         )
 
 
@@ -777,8 +852,8 @@ class ACTS3Client:
         try:
 
             csv_bytes = (
-                _dataframe_to_csv(
-                    df
+                _dataframe_to_csv_bytes(
+                    dataframe
                 )
             )
 
@@ -796,7 +871,7 @@ class ACTS3Client:
             )
 
 
-            raise S3UploadError(
+            raise StorageWriteError(
                 (
                     "Unable to convert DataFrame "
                     f"to CSV entity={entity_name} "
@@ -813,6 +888,7 @@ class ACTS3Client:
             csv_bytes
         )
 
+
         checksum = (
             _calculate_checksum(
                 csv_bytes
@@ -821,23 +897,32 @@ class ACTS3Client:
 
 
         # ====================================================
-        # BUILD OBJECT KEY
+        # BUILD FILE PATH
         # ====================================================
 
-        s3_key = (
-            _build_s3_key(
-                entity_name=entity_name,
-                study_id=study_id,
-                load_date=load_date,
-                run_id=run_id,
+        file_path = (
+            _build_local_path(
+
+                storage_root=
+                    self.storage_root,
+
+                entity_name=
+                    entity_name,
+
+                study_id=
+                    study_id,
+
+                load_date=
+                    load_date,
+
+                run_id=
+                    run_id,
             )
         )
 
 
-        s3_uri = (
-            f"s3://"
-            f"{self.bucket_name}/"
-            f"{s3_key}"
+        storage_uri = (
+            file_path.as_uri()
         )
 
 
@@ -845,86 +930,115 @@ class ACTS3Client:
             (
                 "entity=%s "
                 "study_id=%s "
-                "s3_object_prepared "
-                "s3_uri=%s "
+                "local_file_prepared "
+                "storage_uri=%s "
                 "records=%s "
                 "size_bytes=%s "
                 "checksum=%s"
             ),
             entity_name,
             study_id,
-            s3_uri,
-            len(df),
+            storage_uri,
+            len(dataframe),
             file_size,
             checksum,
         )
 
 
         # ====================================================
-        # PUT OBJECT
+        # CREATE DIRECTORY
         # ====================================================
 
         try:
 
-            self.s3_client.put_object(
-
-                Bucket=
-                    self.bucket_name,
-
-                Key=
-                    s3_key,
-
-                Body=
-                    csv_bytes,
-
-                ContentType=
-                    "text/csv",
-
-                Metadata={
-
-                    "study_id":
-                        study_id,
-
-                    "entity":
-                        entity_name,
-
-                    "run_id":
-                        run_id,
-
-                    "record_count":
-                        str(
-                            len(df)
-                        ),
-
-                    "sha256":
-                        checksum,
-                },
+            file_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
             )
 
 
-        except (
-            ClientError,
-            BotoCoreError,
-        ) as exc:
+        except OSError as exc:
 
             logger.exception(
                 (
                     "entity=%s "
                     "study_id=%s "
-                    "s3_upload_failed "
-                    "bucket=%s "
-                    "key=%s"
+                    "local_directory_creation_failed "
+                    "path=%s"
                 ),
                 entity_name,
                 study_id,
-                self.bucket_name,
-                s3_key,
+                file_path.parent,
             )
 
 
-            raise S3UploadError(
+            raise StorageWriteError(
                 (
-                    "S3 upload failed "
+                    "Unable to create local "
+                    "storage directory "
+                    f"path={file_path.parent}"
+                )
+            ) from exc
+
+
+        # ====================================================
+        # ATOMIC WRITE
+        # ====================================================
+
+        temporary_path = (
+            file_path.with_suffix(
+                ".csv.tmp"
+            )
+        )
+
+
+        try:
+
+            temporary_path.write_bytes(
+                csv_bytes
+            )
+
+
+            temporary_path.replace(
+                file_path
+            )
+
+
+        except OSError as exc:
+
+            logger.exception(
+                (
+                    "entity=%s "
+                    "study_id=%s "
+                    "local_storage_write_failed "
+                    "path=%s"
+                ),
+                entity_name,
+                study_id,
+                file_path,
+            )
+
+
+            if temporary_path.exists():
+
+                try:
+
+                    temporary_path.unlink()
+
+                except OSError:
+
+                    logger.warning(
+                        (
+                            "temporary_file_cleanup_failed "
+                            "path=%s"
+                        ),
+                        temporary_path,
+                    )
+
+
+            raise StorageWriteError(
+                (
+                    "Local storage write failed "
                     f"entity={entity_name} "
                     f"study_id={study_id}"
                 )
@@ -935,10 +1049,10 @@ class ACTS3Client:
         # VERIFY
         # ====================================================
 
-        self._verify_upload(
+        self._verify_file(
 
-            s3_key=
-                s3_key,
+            file_path=
+                file_path,
 
             expected_size=
                 file_size,
@@ -956,18 +1070,18 @@ class ACTS3Client:
             (
                 "entity=%s "
                 "study_id=%s "
-                "s3_upload_completed "
+                "local_storage_write_completed "
                 "records=%s "
-                "s3_uri=%s"
+                "storage_uri=%s"
             ),
             entity_name,
             study_id,
-            len(df),
-            s3_uri,
+            len(dataframe),
+            storage_uri,
         )
 
 
-        return S3UploadResult(
+        return StorageWriteResult(
 
             entity_name=
                 entity_name,
@@ -975,20 +1089,22 @@ class ACTS3Client:
             study_id=
                 study_id,
 
-            uploaded=
+            stored=
                 True,
 
             record_count=
-                len(df),
+                len(dataframe),
 
-            bucket_name=
-                self.bucket_name,
+            storage_backend=
+                self.backend_name,
 
-            s3_key=
-                s3_key,
+            storage_path=
+                str(
+                    file_path
+                ),
 
-            s3_uri=
-                s3_uri,
+            storage_uri=
+                storage_uri,
 
             checksum=
                 checksum,

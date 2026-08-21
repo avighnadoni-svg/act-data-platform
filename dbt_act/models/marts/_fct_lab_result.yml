@@ -1,0 +1,242 @@
+version: 2
+
+models:
+
+  - name: fct_lab_result
+
+    description: >
+      Clinical laboratory-result fact table for the ACT
+      analytical dimensional model. Grain is one row
+      per STUDY_ID + LAB_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_key
+              - lab_id
+
+
+    columns:
+
+      # ==========================================================
+      # FACT KEY
+      # ==========================================================
+
+      - name: lab_result_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key identifying
+          one laboratory result.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # DIMENSION KEYS
+      # ==========================================================
+
+      - name: study_key
+        data_type: varchar
+
+        description: Foreign key to DIM_STUDY.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      - name: site_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_SITE derived through
+          the subject dimension.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+
+
+      - name: subject_key
+        data_type: varchar
+
+        description: Foreign key to DIM_SUBJECT.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_subject')
+                field: subject_key
+
+
+      # ==========================================================
+      # BUSINESS KEY
+      # ==========================================================
+
+      - name: lab_id
+        data_type: varchar
+
+        description: >
+          Laboratory-result business identifier.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # LAB ATTRIBUTES
+      # ==========================================================
+
+      - name: test_name
+        data_type: varchar
+
+        description: >
+          Name of the laboratory test.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: interpretation
+        data_type: varchar
+
+        description: >
+          Clinical interpretation of the laboratory result.
+
+
+      - name: abnormal
+        data_type: boolean
+
+        description: >
+          Indicates whether the laboratory result
+          was classified as abnormal.
+
+
+      # ==========================================================
+      # MEASURES
+      # ==========================================================
+
+      - name: result_value
+        data_type: float
+
+        description: >
+          Numeric laboratory test result.
+
+
+      - name: normal_low
+        data_type: float
+
+        description: >
+          Lower boundary of the laboratory
+          reference range.
+
+
+      - name: normal_high
+        data_type: float
+
+        description: >
+          Upper boundary of the laboratory
+          reference range.
+
+
+      - name: range_variance
+        data_type: float
+
+        description: >
+          Difference between RESULT_VALUE and the applicable
+          normal-range boundary when the result is outside
+          the reference range. Zero means the result is
+          within the available normal range.
+
+
+      - name: lab_result_count
+        data_type: number(38,0)
+
+        description: >
+          Additive measure with value 1 for each
+          laboratory-result fact row.
+
+        data_tests:
+          - not_null
+
+          - accepted_values:
+              arguments:
+                values:
+                  - 1
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the laboratory result
+          was last updated in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: Source entity identifier.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow ingestion run responsible for
+          loading the record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the fact row.

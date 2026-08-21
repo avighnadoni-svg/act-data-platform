@@ -9,6 +9,14 @@ models:
       site and study information. Grain is one row per
       STUDY_ID + SUBJECT_ID.
 
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - subject_id
+
     columns:
 
       - name: study_id

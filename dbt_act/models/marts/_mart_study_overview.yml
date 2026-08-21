@@ -1,0 +1,181 @@
+version: 2
+
+models:
+
+  - name: mart_study_overview
+
+    description: >
+      Study-level clinical operations overview mart for ACT.
+      Provides enrollment, site, visit, adverse-event,
+      laboratory, protocol-deviation, and data-query metrics.
+      Grain is one row per STUDY_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    columns:
+
+      - name: study_key
+        data_type: varchar
+        description: Technical key identifying the clinical study.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: study_id
+        data_type: varchar
+        description: Clinical-study business identifier.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: study_name
+        data_type: varchar
+        description: Clinical study name.
+        data_tests:
+          - not_null
+
+      - name: phase
+        data_type: varchar
+        description: Clinical trial phase.
+
+      - name: target_subjects
+        data_type: number(38,0)
+        description: Planned study-level subject target.
+
+      - name: site_count
+        data_type: number(38,0)
+        description: Number of clinical sites in the study.
+        data_tests:
+          - not_null
+
+      - name: total_site_target_enrollment
+        data_type: number(38,0)
+        description: Sum of enrollment targets across all study sites.
+        data_tests:
+          - not_null
+
+      - name: subject_count
+        data_type: number(38,0)
+        description: Current number of subjects in the study.
+        data_tests:
+          - not_null
+
+      - name: enrolled_subject_count
+        data_type: number(38,0)
+        description: Number of subjects having an enrollment date.
+        data_tests:
+          - not_null
+
+      - name: enrollment_gap
+        data_type: number(38,0)
+        description: >
+          Difference between study target subjects and current
+          subject count.
+
+      - name: enrollment_pct
+        data_type: number(10,2)
+        description: >
+          Current subject count as a percentage of the
+          study enrollment target.
+
+      - name: visit_count
+        data_type: number(38,0)
+        description: Total number of study visits.
+        data_tests:
+          - not_null
+
+      - name: completed_visit_count
+        data_type: number(38,0)
+        description: Number of visits having an actual visit date.
+        data_tests:
+          - not_null
+
+      - name: pending_visit_count
+        data_type: number(38,0)
+        description: Number of visits without an actual visit date.
+        data_tests:
+          - not_null
+
+      - name: adverse_event_count
+        data_type: number(38,0)
+        description: Total adverse events in the study.
+        data_tests:
+          - not_null
+
+      - name: serious_ae_count
+        data_type: number(38,0)
+        description: Number of serious adverse events.
+        data_tests:
+          - not_null
+
+      - name: safety_review_ae_count
+        data_type: number(38,0)
+        description: Number of adverse events requiring safety review.
+        data_tests:
+          - not_null
+
+      - name: avg_ae_reporting_delay_days
+        data_type: number(10,2)
+        description: >
+          Average number of days between adverse-event occurrence
+          and reporting.
+
+      - name: lab_result_count
+        data_type: number(38,0)
+        description: Total laboratory results in the study.
+        data_tests:
+          - not_null
+
+      - name: abnormal_lab_count
+        data_type: number(38,0)
+        description: Number of abnormal laboratory results.
+        data_tests:
+          - not_null
+
+      - name: protocol_deviation_count
+        data_type: number(38,0)
+        description: Total protocol deviations in the study.
+        data_tests:
+          - not_null
+
+      - name: major_deviation_count
+        data_type: number(38,0)
+        description: Number of major protocol deviations.
+        data_tests:
+          - not_null
+
+      - name: critical_deviation_count
+        data_type: number(38,0)
+        description: Number of critical protocol deviations.
+        data_tests:
+          - not_null
+
+      - name: data_query_count
+        data_type: number(38,0)
+        description: Total clinical data queries in the study.
+        data_tests:
+          - not_null
+
+      - name: open_query_count
+        data_type: number(38,0)
+        description: Number of unresolved clinical data queries.
+        data_tests:
+          - not_null
+
+      - name: resolved_query_count
+        data_type: number(38,0)
+        description: Number of resolved clinical data queries.
+        data_tests:
+          - not_null
+
+      - name: avg_query_resolution_days
+        data_type: number(10,2)
+        description: >
+          Average number of days required to resolve completed
+          clinical data queries.
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+        description: Timestamp when dbt built the study overview mart.

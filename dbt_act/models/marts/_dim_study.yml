@@ -1,0 +1,142 @@
+version: 2
+
+models:
+
+  - name: dim_study
+
+    description: >
+      Business-facing clinical study dimension for the ACT
+      data platform. Grain is one row per STUDY_ID.
+
+    config:
+      contract:
+        enforced: true
+
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEY
+      # ==========================================================
+
+      - name: study_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key generated from STUDY_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # BUSINESS KEY
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: >
+          Clinical-study business identifier from the
+          source Rave system.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # STUDY ATTRIBUTES
+      # ==========================================================
+
+      - name: study_name
+        data_type: varchar
+
+        description: >
+          Name of the clinical study.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: phase
+        data_type: varchar
+
+        description: >
+          Clinical-trial phase associated with the study.
+
+
+      - name: target_subjects
+        data_type: number(38,0)
+
+        description: >
+          Planned target number of subjects for the study.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                row_condition: "target_subjects is not null"
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the study was last updated
+          in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: >
+          Source-system identifier for the study record.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: >
+          Source entity from which the study was ingested.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow DAG run responsible for ingesting
+          the source record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the source record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the current
+          study dimension row.

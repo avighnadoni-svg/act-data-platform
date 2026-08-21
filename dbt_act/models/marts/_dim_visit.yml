@@ -1,0 +1,192 @@
+version: 2
+
+models:
+
+  - name: dim_visit
+
+    description: >
+      Clinical visit dimension for the ACT data platform.
+      Grain is one row per STUDY_ID + VISIT_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - visit_id
+
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: visit_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + VISIT_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: subject_key
+        data_type: varchar
+
+        description: >
+          Technical key identifying the subject
+          associated with the visit.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_subject')
+                field: subject_key
+
+
+      - name: study_key
+        data_type: varchar
+
+        description: >
+          Technical key identifying the parent study.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: >
+          Parent clinical-study business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: visit_id
+        data_type: varchar
+
+        description: >
+          Clinical visit business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        data_type: varchar
+
+        description: >
+          Subject business identifier associated with the visit.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # VISIT ATTRIBUTES
+      # ==========================================================
+
+      - name: visit_name
+        data_type: varchar
+
+        description: >
+          Name of the clinical visit.
+
+        data_tests:
+          - dbt_utils.not_empty_string
+
+
+      - name: planned_date
+        data_type: date
+
+        description: >
+          Planned date of the clinical visit.
+
+
+      - name: actual_date
+        data_type: date
+
+        description: >
+          Actual date on which the clinical visit occurred.
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the visit was last updated
+          in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: >
+          Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: >
+          Source entity from which the visit was ingested.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow DAG run responsible for ingesting
+          the source record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the source record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the current
+          visit dimension row.

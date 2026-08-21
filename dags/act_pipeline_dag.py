@@ -1352,6 +1352,105 @@ def act_rave_ingestion():
 
     # ========================================================
     # TASK 9
+    # RECONCILE RAW VS DBT TARGETS
+    # ========================================================
+
+    @task(
+        task_id="reconcile_pipeline",
+
+        retries=1,
+
+        retry_delay=timedelta(
+            minutes=1
+        ),
+
+        execution_timeout=timedelta(
+            minutes=15
+        ),
+    )
+    def reconcile_pipeline(
+        dbt_summary: dict,
+    ) -> dict:
+        """
+        Reconcile Snowflake RAW current tables against the
+        dbt dimensions and facts after dbt build succeeds.
+
+        Validation includes:
+
+            RAW total row count == dbt target total row count
+            per-study row counts match
+            no duplicate business keys
+            no NULL business keys
+            no NULL dbt technical keys
+
+        A mismatch raises an exception and therefore prevents
+        the pipeline from being reported as successful.
+        """
+
+        from src.snowflake.reconciliation import (
+            PipelineReconciler,
+        )
+
+
+        if not isinstance(
+            dbt_summary,
+            dict,
+        ):
+
+            raise RuntimeError(
+                "dbt summary unavailable before reconciliation"
+            )
+
+
+        if (
+            dbt_summary.get(
+                "status"
+            )
+            != "SUCCESS"
+        ):
+
+            raise RuntimeError(
+                (
+                    "dbt build did not succeed before reconciliation. "
+                    f"status={dbt_summary.get('status')}"
+                )
+            )
+
+
+        logger.info(
+            "pipeline_reconciliation_task_started"
+        )
+
+
+        result = (
+            PipelineReconciler()
+            .reconcile()
+        )
+
+
+        result_dict = (
+            result.to_dict()
+        )
+
+
+        logger.info(
+            (
+                "pipeline_reconciliation_task_completed "
+                "status=%s entity_count=%s "
+                "successful_entities=%s failed_entities=%s"
+            ),
+            result.status,
+            result.entity_count,
+            result.successful_entity_count,
+            result.failed_entity_count,
+        )
+
+
+        return result_dict
+
+
+    # ========================================================
+    # TASK 10
     # FINISH PIPELINE RUN AUDIT
     # ========================================================
 
@@ -1394,6 +1493,7 @@ def act_rave_ingestion():
            study + entity in the current DAG run.
         3. Snowflake RAW processing summary.
         4. dbt build result.
+        5. RAW-to-dbt reconciliation result.
 
         SUCCESS requires:
 
@@ -1407,9 +1507,13 @@ def act_rave_ingestion():
 
             dbt build completed successfully
 
+        AND
+
+            RAW-to-dbt reconciliation completed successfully
+
         Any failed, missing, or incomplete ingestion item,
-        Snowflake RAW item, or dbt build makes the pipeline
-        audit FAILED.
+        Snowflake RAW item, dbt build, or reconciliation check
+        makes the pipeline audit FAILED.
         """
 
         import snowflake.connector
@@ -1472,6 +1576,14 @@ def act_rave_ingestion():
             ti.xcom_pull(
                 task_ids=
                     "run_dbt_build"
+            )
+        )
+
+
+        reconciliation_summary = (
+            ti.xcom_pull(
+                task_ids=
+                    "reconcile_pipeline"
             )
         )
 
@@ -1824,6 +1936,73 @@ def act_rave_ingestion():
                 )
 
 
+        # ====================================================
+        # RECONCILIATION VALIDATION
+        # ====================================================
+
+        reconciliation_status = None
+
+        reconciliation_entity_count = None
+
+        reconciliation_failed_entity_count = None
+
+
+        if not isinstance(
+            reconciliation_summary,
+            dict,
+        ):
+
+            error_parts.append(
+                "reconciliation summary unavailable"
+            )
+
+
+        else:
+
+            reconciliation_status = (
+                reconciliation_summary.get(
+                    "status"
+                )
+            )
+
+
+            reconciliation_entity_count = (
+                reconciliation_summary.get(
+                    "entity_count"
+                )
+            )
+
+
+            reconciliation_failed_entity_count = (
+                reconciliation_summary.get(
+                    "failed_entity_count"
+                )
+            )
+
+
+            if reconciliation_status != "SUCCESS":
+
+                error_parts.append(
+                    (
+                        "reconciliation_status="
+                        f"{reconciliation_status}"
+                    )
+                )
+
+
+            if reconciliation_failed_entity_count not in (
+                0,
+                None,
+            ):
+
+                error_parts.append(
+                    (
+                        "reconciliation_failed_entities="
+                        f"{reconciliation_failed_entity_count}"
+                    )
+                )
+
+
         if error_parts:
 
             final_status = "FAILED"
@@ -1924,6 +2103,15 @@ def act_rave_ingestion():
             "dbt_return_code":
                 dbt_return_code,
 
+            "reconciliation_status":
+                reconciliation_status,
+
+            "reconciliation_entity_count":
+                reconciliation_entity_count,
+
+            "reconciliation_failed_entity_count":
+                reconciliation_failed_entity_count,
+
             "error_message":
                 error_message,
         }
@@ -1945,7 +2133,9 @@ def act_rave_ingestion():
                 "raw_successful_tasks=%s "
                 "expected_raw_tasks=%s "
                 "dbt_status=%s "
-                "dbt_return_code=%s"
+                "dbt_return_code=%s "
+                "reconciliation_status=%s "
+                "reconciliation_failed_entities=%s"
             ),
             pipeline_audit_id,
             run_id,
@@ -1961,6 +2151,8 @@ def act_rave_ingestion():
             expected_raw_tasks,
             dbt_status,
             dbt_return_code,
+            reconciliation_status,
+            reconciliation_failed_entity_count,
         )
 
 
@@ -2101,6 +2293,17 @@ def act_rave_ingestion():
 
 
     # ========================================================
+    # RAW -> DBT RECONCILIATION
+    # ========================================================
+
+    reconciliation_result = (
+        reconcile_pipeline(
+            dbt_result
+        )
+    )
+
+
+    # ========================================================
     # PIPELINE FINALIZER
     # ========================================================
 
@@ -2112,20 +2315,25 @@ def act_rave_ingestion():
 
 
     # --------------------------------------------------------
-    # final_audit waits until the dbt stage is terminal.
+    # final_audit waits until reconciliation is terminal.
     #
     # If RAW processing fails:
     #   dbt_result becomes upstream_failed
+    #   reconciliation_result becomes upstream_failed
     #
     # If dbt fails:
     #   dbt_result is failed
+    #   reconciliation_result becomes upstream_failed
     #
-    # In both cases final_audit still runs because it uses
+    # If reconciliation fails:
+    #   reconciliation_result is failed
+    #
+    # In all cases final_audit still runs because it uses
     # trigger_rule=all_done. It writes PIPELINE_RUN_AUDIT=FAILED
     # and then raises so the Airflow DAG is also FAILED.
     # --------------------------------------------------------
 
-    dbt_result >> final_audit
+    reconciliation_result >> final_audit
 
 
 # ============================================================

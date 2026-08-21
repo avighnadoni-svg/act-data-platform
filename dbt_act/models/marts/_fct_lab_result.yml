@@ -18,7 +18,7 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns:
-              - study_key
+              - study_id
               - lab_id
 
 
@@ -47,7 +47,8 @@ models:
       - name: study_key
         data_type: varchar
 
-        description: Foreign key to DIM_STUDY.
+        description: >
+          Foreign key to DIM_STUDY.
 
         data_tests:
           - not_null
@@ -77,7 +78,8 @@ models:
       - name: subject_key
         data_type: varchar
 
-        description: Foreign key to DIM_SUBJECT.
+        description: >
+          Foreign key to DIM_SUBJECT.
 
         data_tests:
           - not_null
@@ -89,8 +91,40 @@ models:
 
 
       # ==========================================================
-      # BUSINESS KEY
+      # BUSINESS KEYS
       # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: >
+          Clinical-study business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_type: varchar
+
+        description: >
+          Clinical-site business identifier associated
+          with the subject.
+
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        data_type: varchar
+
+        description: >
+          Clinical-subject business identifier associated
+          with the laboratory result.
+
+        data_tests:
+          - not_null
+
 
       - name: lab_id
         data_type: varchar
@@ -133,14 +167,14 @@ models:
 
 
       # ==========================================================
-      # MEASURES
+      # LAB MEASURES
       # ==========================================================
 
       - name: result_value
         data_type: float
 
         description: >
-          Numeric laboratory test result.
+          Numeric laboratory-test result.
 
 
       - name: normal_low
@@ -165,7 +199,7 @@ models:
         description: >
           Difference between RESULT_VALUE and the applicable
           normal-range boundary when the result is outside
-          the reference range. Zero means the result is
+          the reference range. Zero indicates the result is
           within the available normal range.
 
 
@@ -193,27 +227,30 @@ models:
         data_type: timestamp_tz
 
         description: >
-          Timestamp when the laboratory result
-          was last updated in the source system.
+          Timestamp when the laboratory result was
+          last updated in the source system.
 
 
       - name: record_hash
         data_type: varchar
 
         description: >
-          RAW business-content hash used for change detection.
+          RAW business-content hash used for
+          change detection.
 
 
       - name: source_system
         data_type: varchar
 
-        description: Source-system identifier.
+        description: >
+          Source-system identifier.
 
 
       - name: source_entity
         data_type: varchar
 
-        description: Source entity identifier.
+        description: >
+          Source entity identifier.
 
 
       - name: dag_run_id
@@ -221,14 +258,15 @@ models:
 
         description: >
           Airflow ingestion run responsible for
-          loading the record.
+          loading the source record.
 
 
       - name: ingested_at
         data_type: timestamp_tz
 
         description: >
-          Timestamp when ACT ingested the record.
+          Timestamp when ACT ingested the
+          source record.
 
 
       # ==========================================================
@@ -239,4 +277,5 @@ models:
         data_type: timestamp_ltz
 
         description: >
-          Timestamp when dbt built the fact row.
+          Timestamp when dbt built the
+          laboratory-result fact row.

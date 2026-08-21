@@ -23,6 +23,7 @@ subject_dimension as (
         site_key,
         study_key,
         study_id,
+        site_id,
         subject_id
 
     from {{ ref('dim_subject') }}
@@ -56,8 +57,17 @@ final as (
 
 
         -- ========================================================
-        -- BUSINESS KEY
+        -- BUSINESS KEYS
         -- ========================================================
+
+        cast(lab.study_id as varchar)
+            as study_id,
+
+        cast(subject.site_id as varchar)
+            as site_id,
+
+        cast(lab.subject_id as varchar)
+            as subject_id,
 
         cast(lab.lab_id as varchar)
             as lab_id,
@@ -92,6 +102,7 @@ final as (
 
         cast(
             case
+
                 when lab.result_value is null
                     then null
 
@@ -104,6 +115,7 @@ final as (
                     then lab.result_value - lab.normal_high
 
                 else 0
+
             end
             as float
         ) as range_variance,

@@ -33,9 +33,25 @@ if str(PROJECT_ROOT) not in sys.path:
     )
 
 
+from src.monitoring.alerting import (
+    on_task_failure,
+    on_task_success,
+)
+
+
 logger = logging.getLogger(
     __name__
 )
+
+
+# ============================================================
+# DEFAULT AIRFLOW CALLBACKS
+# ============================================================
+
+DEFAULT_ARGS = {
+    "on_failure_callback": on_task_failure,
+    "on_success_callback": on_task_success,
+}
 
 
 # ============================================================
@@ -55,6 +71,8 @@ MAX_DISCOVERY_PAGES = 1000
 
 @dag(
     dag_id=DAG_ID,
+
+    default_args=DEFAULT_ARGS,
 
     # ========================================================
     # DEVELOPMENT MODE
@@ -1459,21 +1477,29 @@ def act_rave_ingestion():
 
         # ----------------------------------------------------
         # Run after upstream work is terminal even when
-        # discovery, mapping, ingestion, or summary failed.
+        # discovery, mapping, ingestion, RAW processing,
+        # dbt, or reconciliation failed.
+        #
+        # This task is bookkeeping. It records SUCCESS/FAILED
+        # into PIPELINE_RUN_AUDIT and returns that result.
+        #
+        # It does NOT intentionally fail just because an
+        # upstream task failed. A separate final leaf task
+        # enforces the Airflow DAG-run status.
         # ----------------------------------------------------
 
         trigger_rule="all_done",
 
-        retries=2,
+        # ----------------------------------------------------
+        # One retry is retained only for a genuine transient
+        # audit-finalization problem, such as a Snowflake
+        # connectivity issue.
+        # ----------------------------------------------------
+
+        retries=1,
 
         retry_delay=timedelta(
             seconds=30
-        ),
-
-        retry_exponential_backoff=True,
-
-        max_retry_delay=timedelta(
-            minutes=5
         ),
 
         execution_timeout=timedelta(
@@ -2157,29 +2183,125 @@ def act_rave_ingestion():
 
 
         # ====================================================
-        # KEEP AIRFLOW DAG STATUS CONSISTENT WITH AUDIT STATUS
+        # RETURN AUDIT RESULT
         # ====================================================
         #
-        # Because this finalizer uses trigger_rule=all_done,
-        # it can execute after an upstream failure.
+        # This finalizer is bookkeeping only.
         #
-        # If we merely returned SUCCESS from this task after
-        # writing PIPELINE_RUN_AUDIT = FAILED, the finalizer
-        # could become the only successful leaf task and make
-        # the Airflow DAG run look successful.
+        # If the business pipeline failed, this task still
+        # succeeds after persisting:
         #
-        # Therefore:
+        #     PIPELINE_RUN_AUDIT.STATUS = FAILED
         #
-        #     audit FAILED
-        #         =>
-        #     finalizer task FAILED
-        #         =>
-        #     DAG run FAILED
+        # The downstream enforce_pipeline_status task is the
+        # final Airflow leaf that marks the DAG run FAILED.
         # ====================================================
+
+        return result
+
+
+    # ========================================================
+    # TASK 11
+    # ENFORCE FINAL AIRFLOW DAG STATUS
+    # ========================================================
+
+    @task(
+        task_id="enforce_pipeline_status",
+
+        # ----------------------------------------------------
+        # This task intentionally fails when the audit result
+        # says the pipeline failed.
+        #
+        # It must never retry and must not create another
+        # Slack/Snowflake alert because the actual failing
+        # business task already generated the meaningful alert.
+        # ----------------------------------------------------
+
+        retries=0,
+
+        on_failure_callback=None,
+
+        on_success_callback=None,
+
+        execution_timeout=timedelta(
+            minutes=2
+        ),
+    )
+    def enforce_pipeline_status(
+        audit_result: dict,
+    ) -> dict:
+        """
+        Keep the Airflow DAG-run state consistent with the
+        persisted PIPELINE_RUN_AUDIT status.
+
+        The final audit task records the result.
+
+        This leaf task only enforces:
+
+            audit SUCCESS -> task SUCCESS
+            audit FAILED  -> task FAILED
+
+        No operational alert is generated here, which avoids
+        duplicate alerts such as:
+
+            SOURCE_DISCOVERY_FAILURE
+            AUDIT_FAILURE
+            AUDIT_FAILURE
+            AUDIT_FAILURE
+        """
+
+        from airflow.exceptions import (
+            AirflowFailException,
+        )
+
+
+        if not isinstance(
+            audit_result,
+            dict,
+        ):
+
+            raise AirflowFailException(
+                "Pipeline audit result unavailable"
+            )
+
+
+        final_status = (
+            audit_result.get(
+                "status"
+            )
+        )
+
 
         if final_status != "SUCCESS":
 
-            raise RuntimeError(
+            error_message = (
+                audit_result.get(
+                    "error_message"
+                )
+                or "Pipeline audit reported FAILED"
+            )
+
+
+            logger.error(
+                (
+                    "pipeline_status_enforcement_failed "
+                    "pipeline_audit_id=%s "
+                    "dag_run_id=%s "
+                    "status=%s "
+                    "error=%s"
+                ),
+                audit_result.get(
+                    "pipeline_audit_id"
+                ),
+                audit_result.get(
+                    "dag_run_id"
+                ),
+                final_status,
+                error_message,
+            )
+
+
+            raise AirflowFailException(
                 (
                     "ACT pipeline failed. "
                     f"{error_message}"
@@ -2187,7 +2309,22 @@ def act_rave_ingestion():
             )
 
 
-        return result
+        logger.info(
+            (
+                "pipeline_status_enforcement_succeeded "
+                "pipeline_audit_id=%s "
+                "dag_run_id=%s"
+            ),
+            audit_result.get(
+                "pipeline_audit_id"
+            ),
+            audit_result.get(
+                "dag_run_id"
+            ),
+        )
+
+
+        return audit_result
 
 
     # ========================================================
@@ -2329,11 +2466,33 @@ def act_rave_ingestion():
     #   reconciliation_result is failed
     #
     # In all cases final_audit still runs because it uses
-    # trigger_rule=all_done. It writes PIPELINE_RUN_AUDIT=FAILED
-    # and then raises so the Airflow DAG is also FAILED.
+    # trigger_rule=all_done and persists the final audit state.
     # --------------------------------------------------------
 
     reconciliation_result >> final_audit
+
+
+    # ========================================================
+    # FINAL DAG-STATUS ENFORCEMENT
+    # ========================================================
+    #
+    # Keeping this separate from finish_pipeline_audit prevents
+    # the audit task from retrying and generating repeated
+    # AUDIT_FAILURE Slack alerts when the real failure occurred
+    # earlier in the pipeline.
+    #
+    # This is the only final leaf task:
+    #
+    #     audit SUCCESS -> DAG SUCCESS
+    #     audit FAILED  -> DAG FAILED
+    #
+    # It has no failure callback, so the original task remains
+    # the source of the operational Slack alert.
+    # ========================================================
+
+    enforce_pipeline_status(
+        final_audit
+    )
 
 
 # ============================================================

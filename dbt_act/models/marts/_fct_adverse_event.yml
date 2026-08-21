@@ -1,0 +1,268 @@
+version: 2
+
+models:
+
+  - name: fct_adverse_event
+
+    description: >
+      Adverse-event fact table for the ACT analytical
+      dimensional model. Grain is one row per
+      STUDY_ID + AE_ID.
+
+    config:
+      contract:
+        enforced: true
+
+
+    columns:
+
+      # ==========================================================
+      # FACT KEY
+      # ==========================================================
+
+      - name: adverse_event_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key identifying
+          one adverse event.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # DIMENSION KEYS
+      # ==========================================================
+
+      - name: study_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_STUDY.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      - name: site_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_SITE.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+
+
+      - name: subject_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_SUBJECT.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_subject')
+                field: subject_key
+
+
+      # ==========================================================
+      # BUSINESS KEY
+      # ==========================================================
+
+      - name: ae_id
+        data_type: varchar
+
+        description: >
+          Adverse-event business identifier.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # EVENT ATTRIBUTES
+      # ==========================================================
+
+      - name: event_term
+        data_type: varchar
+
+        description: >
+          Reported adverse-event term.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: severity
+        data_type: varchar
+
+        description: >
+          Severity of the adverse event.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - MILD
+                  - MODERATE
+                  - SEVERE
+
+
+      - name: serious
+        data_type: varchar
+
+        description: >
+          Indicates whether the adverse event is serious.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - Y
+                  - N
+
+
+      - name: processing_priority
+        data_type: varchar
+
+        description: >
+          Processing priority assigned to the adverse event.
+
+
+      - name: requires_safety_review
+        data_type: boolean
+
+        description: >
+          Indicates whether the adverse event requires
+          safety review.
+
+
+      # ==========================================================
+      # EVENT DATES
+      # ==========================================================
+
+      - name: event_date
+        data_type: date
+
+        description: >
+          Date on which the adverse event occurred.
+
+
+      - name: reported_date
+        data_type: date
+
+        description: >
+          Date on which the adverse event was reported.
+
+
+      # ==========================================================
+      # MEASURES
+      # ==========================================================
+
+      - name: reporting_delay_days
+        data_type: number(38,0)
+
+        description: >
+          Number of calendar days between event occurrence
+          and reporting.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                row_condition: "reporting_delay_days is not null"
+
+
+      - name: adverse_event_count
+        data_type: number(38,0)
+
+        description: >
+          Additive fact measure with value 1 for each
+          adverse-event row.
+
+        data_tests:
+          - not_null
+
+          - accepted_values:
+              arguments:
+                values:
+                  - 1
+
+
+      # ==========================================================
+      # TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Latest source-system update timestamp
+          for the adverse event.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: >
+          Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: >
+          Source entity identifier.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow ingestion run responsible for
+          loading the record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the fact row.

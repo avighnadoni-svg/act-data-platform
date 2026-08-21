@@ -1,15 +1,13 @@
 -- ============================================================================
--- ACT Data Platform - Preview DATA_QUERY normalized S3 file
+-- ACT Data Platform - Preview DATA_QUERY Internal Stage
 -- File: snowflake/sql/024_preview_data_query_stage.sql
 --
 -- Purpose:
---   Inspect the exact normalized CSV column order before creating the
---   LND / HISTORY / CURRENT Snowflake tables.
+--   Inspect normalized data_query CSV files in the Snowflake internal
+--   RAW stage.
 --
--- Why:
---   DATA_QUERY is sourced as XML, then parsed/normalized to CSV by the
---   Airflow/Python ingestion layer. We confirm the final CSV order first
---   instead of guessing positional COPY mappings.
+-- Source format may be XML, but the Python ingestion layer normalizes
+-- records to CSV before Snowflake loading.
 -- ============================================================================
 
 USE ROLE ACCOUNTADMIN;
@@ -19,20 +17,24 @@ USE SCHEMA RAW;
 
 
 -- ============================================================================
--- 1. SHOW AVAILABLE DATA_QUERY FILES
+-- FILES
 -- ============================================================================
 
-LIST @ACT_DB.RAW.ACT_RAW_S3_STAGE
-    PATTERN = '.*data_query/.*/data_query[.]csv';
+LIST @ACT_DB.RAW.ACT_RAW_STAGE
+PATTERN =
+    '.*data_query/.*/data_query[.]csv';
 
 
 -- ============================================================================
--- 2. PREVIEW RAW POSITIONAL VALUES
+-- POSITIONAL PREVIEW
 -- ============================================================================
 
 SELECT
-    METADATA$FILENAME          AS SOURCE_FILE_NAME,
-    METADATA$FILE_ROW_NUMBER   AS SOURCE_FILE_ROW_NUMBER,
+    METADATA$FILENAME
+        AS SOURCE_FILE_NAME,
+
+    METADATA$FILE_ROW_NUMBER
+        AS SOURCE_FILE_ROW_NUMBER,
 
     t.$1::VARCHAR  AS COL_01,
     t.$2::VARCHAR  AS COL_02,
@@ -51,9 +53,11 @@ SELECT
     t.$15::VARCHAR AS COL_15,
     t.$16::VARCHAR AS COL_16
 
-FROM @ACT_DB.RAW.ACT_RAW_S3_STAGE
+FROM
+    @ACT_DB.RAW.ACT_RAW_STAGE
 (
-    PATTERN => '.*data_query/.*/data_query[.]csv'
+    PATTERN =>
+        '.*data_query/.*/data_query[.]csv'
 ) t
 
 ORDER BY

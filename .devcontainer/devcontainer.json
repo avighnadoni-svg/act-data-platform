@@ -1,8 +1,0 @@
-{
-  "name": "ACT Data Platform",
-  "remoteEnv": {
-    "AIRFLOW_HOME": "/workspaces/act-data-platform/airflow",
-    "AIRFLOW__CORE__DAGS_FOLDER": "/workspaces/act-data-platform/dags",
-    "AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS": "admin:admin"
-  }
-}

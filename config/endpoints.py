@@ -31,7 +31,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "study",
     },
 
@@ -63,7 +63,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "site",
     },
 
@@ -96,7 +96,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "subject",
     },
 
@@ -129,7 +129,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "visit",
     },
 
@@ -163,7 +163,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "adverse_event",
     },
 
@@ -197,7 +197,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "lab_result",
     },
 
@@ -231,7 +231,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "protocol_deviation",
     },
 
@@ -265,7 +265,7 @@ ENDPOINTS = {
             "updated_at",
         ],
 
-        "s3_prefix":
+        "storage_prefix":
             "data_query",
     },
 }

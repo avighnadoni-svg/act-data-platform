@@ -1,0 +1,283 @@
+version: 2
+
+models:
+
+  - name: fct_data_query
+
+    description: >
+      Clinical data-query fact table for the ACT analytical
+      dimensional model. Grain is one row per
+      STUDY_ID + QUERY_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - query_id
+
+
+    columns:
+
+      # ==========================================================
+      # FACT KEY
+      # ==========================================================
+
+      - name: data_query_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + QUERY_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # DIMENSION KEYS
+      # ==========================================================
+
+      - name: study_key
+        data_type: varchar
+
+        description: Foreign key to DIM_STUDY.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      - name: site_key
+        data_type: varchar
+
+        description: Foreign key to DIM_SITE.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+
+
+      - name: subject_key
+        data_type: varchar
+
+        description: Foreign key to DIM_SUBJECT.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_subject')
+                field: subject_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: Parent clinical-study identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: query_id
+        data_type: varchar
+
+        description: Clinical data-query identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_type: varchar
+
+        description: Site associated with the data query.
+
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        data_type: varchar
+
+        description: Subject associated with the data query.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # QUERY ATTRIBUTES
+      # ==========================================================
+
+      - name: status
+        data_type: varchar
+
+        description: Current status of the clinical data query.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: opened_date
+        data_type: date
+
+        description: Date on which the data query was opened.
+
+        data_tests:
+          - not_null
+
+
+      - name: resolved_date
+        data_type: date
+
+        description: >
+          Date on which the query was resolved.
+          NULL indicates an unresolved query.
+
+
+      # ==========================================================
+      # MEASURES
+      # ==========================================================
+
+      - name: resolution_days
+        data_type: number(38,0)
+
+        description: >
+          Number of calendar days between query opening
+          and resolution. NULL for unresolved queries.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                row_condition: "resolution_days is not null"
+
+
+      - name: data_query_count
+        data_type: number(38,0)
+
+        description: >
+          Additive measure with value 1 for every
+          data-query fact row.
+
+        data_tests:
+          - not_null
+
+          - accepted_values:
+              arguments:
+                values:
+                  - 1
+
+
+      - name: open_query_count
+        data_type: number(38,0)
+
+        description: >
+          Additive measure containing 1 when the query
+          is currently unresolved and 0 otherwise.
+
+        data_tests:
+          - not_null
+
+          - accepted_values:
+              arguments:
+                values:
+                  - 0
+                  - 1
+
+
+      - name: resolved_query_count
+        data_type: number(38,0)
+
+        description: >
+          Additive measure containing 1 when the query
+          has a resolution date and 0 otherwise.
+
+        data_tests:
+          - not_null
+
+          - accepted_values:
+              arguments:
+                values:
+                  - 0
+                  - 1
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the query was last updated
+          in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: Source entity identifier.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow ingestion run responsible for loading
+          the source record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the source record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the data-query fact row.

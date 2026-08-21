@@ -1,0 +1,174 @@
+version: 2
+
+models:
+
+  - name: dim_site
+
+    description: >
+      Clinical site dimension for the ACT data platform.
+      Grain is one row per STUDY_ID + SITE_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - site_id
+
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: site_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + SITE_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: study_key
+        data_type: varchar
+
+        description: >
+          Technical key identifying the parent study.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: >
+          Parent clinical-study business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_type: varchar
+
+        description: >
+          Clinical-site business identifier.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # SITE ATTRIBUTES
+      # ==========================================================
+
+      - name: country
+        data_type: varchar
+
+        description: >
+          Country in which the clinical site operates.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: investigator
+        data_type: varchar
+
+        description: >
+          Investigator associated with the clinical site.
+
+
+      - name: target_enrollment
+        data_type: number(38,0)
+
+        description: >
+          Planned enrollment target for the clinical site.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                row_condition: "target_enrollment is not null"
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the site was last updated
+          in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: >
+          Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: >
+          Source entity from which the site was ingested.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow DAG run responsible for ingesting
+          the source record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the source record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the current
+          site dimension row.

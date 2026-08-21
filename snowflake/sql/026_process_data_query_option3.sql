@@ -88,7 +88,7 @@ FROM
         METADATA$FILE_LAST_MODIFIED,
         METADATA$START_SCAN_TIME
 
-    FROM @ACT_DB.RAW.ACT_RAW_S3_STAGE
+    FROM @ACT_DB.RAW.ACT_RAW_STAGE
     (
         PATTERN => '.*data_query/.*/data_query[.]csv'
     ) t

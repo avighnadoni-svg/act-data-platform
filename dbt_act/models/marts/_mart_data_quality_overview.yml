@@ -1,0 +1,161 @@
+version: 2
+
+models:
+
+  - name: mart_data_quality_overview
+
+    description: >
+      Site-level operational data-quality mart for ACT.
+      Combines clinical data-query and protocol-deviation
+      metrics to identify sites requiring data-management
+      attention. Grain is one row per STUDY_ID + SITE_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - site_id
+
+    columns:
+
+      - name: site_key
+        data_type: varchar
+        description: Technical key identifying the clinical site.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: study_key
+        data_type: varchar
+        description: Technical key identifying the parent study.
+        data_tests:
+          - not_null
+
+      - name: study_id
+        data_type: varchar
+        description: Clinical-study business identifier.
+        data_tests:
+          - not_null
+
+      - name: site_id
+        data_type: varchar
+        description: Clinical-site business identifier.
+        data_tests:
+          - not_null
+
+      - name: study_name
+        data_type: varchar
+        description: Clinical study name.
+
+      - name: phase
+        data_type: varchar
+        description: Clinical trial phase.
+
+      - name: country
+        data_type: varchar
+        description: Country in which the site operates.
+
+      - name: investigator
+        data_type: varchar
+        description: Investigator associated with the site.
+
+      - name: data_query_count
+        data_type: number(38,0)
+        description: Total number of clinical data queries.
+        data_tests:
+          - not_null
+
+      - name: open_query_count
+        data_type: number(38,0)
+        description: Number of unresolved clinical data queries.
+        data_tests:
+          - not_null
+
+      - name: resolved_query_count
+        data_type: number(38,0)
+        description: Number of resolved clinical data queries.
+        data_tests:
+          - not_null
+
+      - name: subjects_with_open_queries
+        data_type: number(38,0)
+        description: >
+          Number of distinct subjects currently having
+          at least one unresolved query.
+        data_tests:
+          - not_null
+
+      - name: avg_query_resolution_days
+        data_type: number(10,2)
+        description: >
+          Average number of calendar days required
+          to resolve completed queries.
+
+      - name: max_query_resolution_days
+        data_type: number(38,0)
+        description: >
+          Maximum resolution time among completed queries.
+
+      - name: oldest_open_query_days
+        data_type: number(38,0)
+        description: >
+          Age in calendar days of the site's oldest
+          unresolved query.
+
+      - name: protocol_deviation_count
+        data_type: number(38,0)
+        description: Total protocol deviations for the site.
+        data_tests:
+          - not_null
+
+      - name: minor_deviation_count
+        data_type: number(38,0)
+        description: Number of minor protocol deviations.
+        data_tests:
+          - not_null
+
+      - name: major_deviation_count
+        data_type: number(38,0)
+        description: Number of major protocol deviations.
+        data_tests:
+          - not_null
+
+      - name: critical_deviation_count
+        data_type: number(38,0)
+        description: Number of critical protocol deviations.
+        data_tests:
+          - not_null
+
+      - name: has_open_queries
+        data_type: boolean
+        description: >
+          True when the site currently has one or more
+          unresolved data queries.
+        data_tests:
+          - not_null
+
+      - name: has_significant_deviations
+        data_type: boolean
+        description: >
+          True when the site has at least one major
+          or critical protocol deviation.
+        data_tests:
+          - not_null
+
+      - name: requires_data_quality_attention
+        data_type: boolean
+        description: >
+          Operational flag indicating that the site has
+          unresolved queries or significant protocol deviations.
+        data_tests:
+          - not_null
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+        description: Timestamp when dbt built the mart.

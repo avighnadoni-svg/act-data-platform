@@ -7,8 +7,17 @@ Writes operational audit records to:
     ACT_DB.CONTROL.ENTITY_LOAD_AUDIT
     ACT_DB.CONTROL.REPROCESS_AUDIT
 
-The normal extraction watermark remains in Airflow Variables. This module
-does not read or update Airflow watermarks.
+The CONTROL layer is storage-neutral.
+
+Examples of storage implementations:
+
+    local filesystem
+    Amazon S3
+    Azure Data Lake Storage
+    Google Cloud Storage
+
+The audit layer records generic storage metadata rather than
+cloud-provider-specific metadata.
 
 Connection
 ----------
@@ -35,16 +44,36 @@ from src.common.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+
 DEFAULT_CONNECTION_NAME = "SNOWFLAKE_ACT_DEV"
 
-PIPELINE_TABLE = "ACT_DB.CONTROL.PIPELINE_RUN_AUDIT"
-ENTITY_TABLE = "ACT_DB.CONTROL.ENTITY_LOAD_AUDIT"
-REPROCESS_TABLE = "ACT_DB.CONTROL.REPROCESS_AUDIT"
 
+PIPELINE_TABLE = (
+    "ACT_DB.CONTROL.PIPELINE_RUN_AUDIT"
+)
+
+ENTITY_TABLE = (
+    "ACT_DB.CONTROL.ENTITY_LOAD_AUDIT"
+)
+
+REPROCESS_TABLE = (
+    "ACT_DB.CONTROL.REPROCESS_AUDIT"
+)
+
+
+# ============================================================================
+# EXCEPTIONS
+# ============================================================================
 
 class ControlAuditError(RuntimeError):
-    """Raised when writing ACT CONTROL audit records fails."""
+    """
+    Raised when writing ACT CONTROL audit records fails.
+    """
 
+
+# ============================================================================
+# HELPERS
+# ============================================================================
 
 def _connection_name() -> str:
     """
@@ -57,6 +86,7 @@ def _connection_name() -> str:
     ).strip()
 
     if not value:
+
         raise ControlAuditError(
             "SNOWFLAKE_CONNECTION_NAME is empty"
         )
@@ -69,20 +99,25 @@ def _new_id() -> str:
     Create a UUID value compatible with Snowflake UUID columns.
     """
 
-    return str(uuid4())
+    return str(
+        uuid4()
+    )
 
 
 def _clean_error_message(
     error_message: str | None,
 ) -> str | None:
     """
-    Keep audit errors useful without allowing extremely large payloads.
+    Keep audit errors useful without allowing extremely
+    large payloads into the CONTROL tables.
     """
 
     if error_message is None:
         return None
 
-    value = str(error_message).strip()
+    value = str(
+        error_message
+    ).strip()
 
     if not value:
         return None
@@ -90,46 +125,82 @@ def _clean_error_message(
     return value[:8000]
 
 
+# ============================================================================
+# CONTROL AUDIT CLIENT
+# ============================================================================
+
 class ControlAuditClient:
     """
-    Small Snowflake audit client for ACT operational CONTROL tables.
+    Snowflake audit client for ACT operational CONTROL tables.
 
-    Each public write method opens a short-lived Snowflake connection,
-    executes one transaction, commits on success, and closes the session.
+    Each public write method:
+
+        1. Opens a short-lived Snowflake connection
+        2. Executes one transaction
+        3. Commits on success
+        4. Rolls back on failure
+        5. Closes the connection
     """
 
     def __init__(
         self,
         connection_name: str | None = None,
     ) -> None:
+
         self.connection_name = (
             connection_name
             or _connection_name()
         )
 
-    def _connect(self) -> SnowflakeConnection:
+
+    # ========================================================================
+    # CONNECTION
+    # ========================================================================
+
+    def _connect(
+        self,
+    ) -> SnowflakeConnection:
         """
-        Open a Snowflake connection using the configured named connection.
+        Open Snowflake using the configured named connection.
         """
 
         try:
+
             conn = snowflake.connector.connect(
-                connection_name=self.connection_name,
-                application="ACT_DATA_PLATFORM_CONTROL_AUDIT",
+                connection_name=
+                    self.connection_name,
+
+                application=
+                    "ACT_DATA_PLATFORM_CONTROL_AUDIT",
             )
 
-            conn.autocommit(False)
+            conn.autocommit(
+                False
+            )
 
             return conn
 
         except Exception as exc:
+
             logger.exception(
-                "control_audit_connection_failed connection_name=%s",
+                (
+                    "control_audit_connection_failed "
+                    "connection_name=%s"
+                ),
                 self.connection_name,
             )
+
             raise ControlAuditError(
-                "Unable to connect to Snowflake for CONTROL auditing"
+                (
+                    "Unable to connect to Snowflake "
+                    "for CONTROL auditing"
+                )
             ) from exc
+
+
+    # ========================================================================
+    # TRANSACTION
+    # ========================================================================
 
     @staticmethod
     def _execute_transaction(
@@ -138,21 +209,34 @@ class ControlAuditClient:
         parameters: tuple[Any, ...],
     ) -> None:
         """
-        Execute a single audit DML statement transactionally.
+        Execute one audit DML statement transactionally.
         """
 
         cursor = conn.cursor()
 
         try:
-            cursor.execute(sql, parameters)
+
+            cursor.execute(
+                sql,
+                parameters,
+            )
+
             conn.commit()
 
         except Exception:
+
             conn.rollback()
+
             raise
 
         finally:
+
             cursor.close()
+
+
+    # ========================================================================
+    # PIPELINE RUN - START
+    # ========================================================================
 
     def start_pipeline_run(
         self,
@@ -165,7 +249,7 @@ class ControlAuditClient:
         work_items_created: int | None = None,
     ) -> str:
         """
-        Insert the RUNNING row for one Airflow DAG run.
+        Insert the RUNNING audit row for one Airflow DAG run.
         """
 
         audit_id = _new_id()
@@ -204,6 +288,7 @@ class ControlAuditClient:
         conn = self._connect()
 
         try:
+
             self._execute_transaction(
                 conn,
                 sql,
@@ -221,7 +306,9 @@ class ControlAuditClient:
             logger.info(
                 (
                     "pipeline_audit_started "
-                    "pipeline_audit_id=%s dag_id=%s dag_run_id=%s"
+                    "pipeline_audit_id=%s "
+                    "dag_id=%s "
+                    "dag_run_id=%s"
                 ),
                 audit_id,
                 dag_id,
@@ -231,16 +318,27 @@ class ControlAuditClient:
             return audit_id
 
         except Exception as exc:
+
             logger.exception(
-                "pipeline_audit_start_failed dag_run_id=%s",
+                (
+                    "pipeline_audit_start_failed "
+                    "dag_run_id=%s"
+                ),
                 dag_run_id,
             )
+
             raise ControlAuditError(
                 "Failed to start pipeline audit"
             ) from exc
 
         finally:
+
             conn.close()
+
+
+    # ========================================================================
+    # PIPELINE RUN - FINISH
+    # ========================================================================
 
     def finish_pipeline_run(
         self,
@@ -261,21 +359,38 @@ class ControlAuditClient:
             UPDATE {PIPELINE_TABLE}
             SET
                 ENDED_AT = CURRENT_TIMESTAMP(),
+
                 STATUS = %s,
+
                 STUDIES_DISCOVERED =
-                    COALESCE(%s, STUDIES_DISCOVERED),
+                    COALESCE(
+                        %s,
+                        STUDIES_DISCOVERED
+                    ),
+
                 WORK_ITEMS_CREATED =
-                    COALESCE(%s, WORK_ITEMS_CREATED),
+                    COALESCE(
+                        %s,
+                        WORK_ITEMS_CREATED
+                    ),
+
                 SUCCESSFUL_ITEMS = %s,
+
                 FAILED_ITEMS = %s,
+
                 ERROR_MESSAGE = %s,
-                UPDATED_AT = CURRENT_TIMESTAMP()
-            WHERE PIPELINE_AUDIT_ID = %s
+
+                UPDATED_AT =
+                    CURRENT_TIMESTAMP()
+
+            WHERE
+                PIPELINE_AUDIT_ID = %s
         """
 
         conn = self._connect()
 
         try:
+
             self._execute_transaction(
                 conn,
                 sql,
@@ -285,7 +400,9 @@ class ControlAuditClient:
                     work_items_created,
                     successful_items,
                     failed_items,
-                    _clean_error_message(error_message),
+                    _clean_error_message(
+                        error_message
+                    ),
                     pipeline_audit_id,
                 ),
             )
@@ -293,13 +410,15 @@ class ControlAuditClient:
             logger.info(
                 (
                     "pipeline_audit_finished "
-                    "pipeline_audit_id=%s status=%s"
+                    "pipeline_audit_id=%s "
+                    "status=%s"
                 ),
                 pipeline_audit_id,
                 status.upper(),
             )
 
         except Exception as exc:
+
             logger.exception(
                 (
                     "pipeline_audit_finish_failed "
@@ -307,12 +426,19 @@ class ControlAuditClient:
                 ),
                 pipeline_audit_id,
             )
+
             raise ControlAuditError(
                 "Failed to finish pipeline audit"
             ) from exc
 
         finally:
+
             conn.close()
+
+
+    # ========================================================================
+    # ENTITY LOAD - START
+    # ========================================================================
 
     def start_entity_load(
         self,
@@ -373,6 +499,7 @@ class ControlAuditClient:
         conn = self._connect()
 
         try:
+
             self._execute_transaction(
                 conn,
                 sql,
@@ -394,7 +521,9 @@ class ControlAuditClient:
                 (
                     "entity_audit_started "
                     "entity_load_audit_id=%s "
-                    "study_id=%s entity=%s load_type=%s"
+                    "study_id=%s "
+                    "entity=%s "
+                    "load_type=%s"
                 ),
                 audit_id,
                 study_id.upper(),
@@ -405,20 +534,29 @@ class ControlAuditClient:
             return audit_id
 
         except Exception as exc:
+
             logger.exception(
                 (
                     "entity_audit_start_failed "
-                    "study_id=%s entity=%s"
+                    "study_id=%s "
+                    "entity=%s"
                 ),
                 study_id,
                 entity_name,
             )
+
             raise ControlAuditError(
                 "Failed to start entity-load audit"
             ) from exc
 
         finally:
+
             conn.close()
+
+
+    # ========================================================================
+    # ENTITY LOAD - FINISH
+    # ========================================================================
 
     def finish_entity_load(
         self,
@@ -426,48 +564,78 @@ class ControlAuditClient:
         entity_load_audit_id: str,
         status: str,
         source_row_count: int | None = None,
-        s3_row_count: int | None = None,
+        storage_row_count: int | None = None,
         snowflake_row_count: int | None = None,
         source_watermark_to: Any | None = None,
-        s3_uri: str | None = None,
+        storage_uri: str | None = None,
         file_checksum: str | None = None,
         error_message: str | None = None,
     ) -> None:
         """
-        Complete an existing study/entity load audit row.
+        Complete one study/entity load audit.
+
+        STORAGE_ROW_COUNT represents the number of normalized
+        rows successfully written to the configured storage
+        backend.
+
+        STORAGE_URI may contain, for example:
+
+            file:///...
+            @ACT_DB.RAW.ACT_RAW_STAGE/...
+            s3://...
+            abfss://...
+
+        The CONTROL layer therefore remains independent from
+        the physical storage technology.
         """
 
         sql = f"""
             UPDATE {ENTITY_TABLE}
             SET
-                ENDED_AT = CURRENT_TIMESTAMP(),
+                ENDED_AT =
+                    CURRENT_TIMESTAMP(),
+
                 STATUS = %s,
+
                 SOURCE_ROW_COUNT = %s,
-                S3_ROW_COUNT = %s,
+
+                STORAGE_ROW_COUNT = %s,
+
                 SNOWFLAKE_ROW_COUNT = %s,
+
                 SOURCE_WATERMARK_TO = %s,
-                S3_URI = %s,
+
+                STORAGE_URI = %s,
+
                 FILE_CHECKSUM = %s,
+
                 ERROR_MESSAGE = %s,
-                UPDATED_AT = CURRENT_TIMESTAMP()
-            WHERE ENTITY_LOAD_AUDIT_ID = %s
+
+                UPDATED_AT =
+                    CURRENT_TIMESTAMP()
+
+            WHERE
+                ENTITY_LOAD_AUDIT_ID = %s
         """
 
         conn = self._connect()
 
         try:
+
             self._execute_transaction(
                 conn,
                 sql,
                 (
                     status.upper(),
                     source_row_count,
-                    s3_row_count,
+                    storage_row_count,
                     snowflake_row_count,
                     source_watermark_to,
-                    s3_uri,
+                    storage_uri,
                     file_checksum,
-                    _clean_error_message(error_message),
+                    _clean_error_message(
+                        error_message
+                    ),
                     entity_load_audit_id,
                 ),
             )
@@ -475,13 +643,15 @@ class ControlAuditClient:
             logger.info(
                 (
                     "entity_audit_finished "
-                    "entity_load_audit_id=%s status=%s"
+                    "entity_load_audit_id=%s "
+                    "status=%s"
                 ),
                 entity_load_audit_id,
                 status.upper(),
             )
 
         except Exception as exc:
+
             logger.exception(
                 (
                     "entity_audit_finish_failed "
@@ -489,12 +659,19 @@ class ControlAuditClient:
                 ),
                 entity_load_audit_id,
             )
+
             raise ControlAuditError(
                 "Failed to finish entity-load audit"
             ) from exc
 
         finally:
+
             conn.close()
+
+
+    # ========================================================================
+    # REPROCESS - START
+    # ========================================================================
 
     def start_reprocess(
         self,
@@ -508,7 +685,8 @@ class ControlAuditClient:
         normal_watermark_before: Any | None = None,
     ) -> str:
         """
-        Insert the RUNNING row for a manual historical reprocess request.
+        Insert the RUNNING row for one manual historical
+        reprocess request.
         """
 
         audit_id = _new_id()
@@ -551,6 +729,7 @@ class ControlAuditClient:
         conn = self._connect()
 
         try:
+
             self._execute_transaction(
                 conn,
                 sql,
@@ -569,7 +748,9 @@ class ControlAuditClient:
             logger.info(
                 (
                     "reprocess_audit_started "
-                    "reprocess_audit_id=%s study_id=%s entity=%s"
+                    "reprocess_audit_id=%s "
+                    "study_id=%s "
+                    "entity=%s"
                 ),
                 audit_id,
                 study_id.upper(),
@@ -579,20 +760,29 @@ class ControlAuditClient:
             return audit_id
 
         except Exception as exc:
+
             logger.exception(
                 (
                     "reprocess_audit_start_failed "
-                    "study_id=%s entity=%s"
+                    "study_id=%s "
+                    "entity=%s"
                 ),
                 study_id,
                 entity_name,
             )
+
             raise ControlAuditError(
                 "Failed to start reprocess audit"
             ) from exc
 
         finally:
+
             conn.close()
+
+
+    # ========================================================================
+    # REPROCESS - FINISH
+    # ========================================================================
 
     def finish_reprocess(
         self,
@@ -600,7 +790,7 @@ class ControlAuditClient:
         reprocess_audit_id: str,
         status: str,
         source_row_count: int | None = None,
-        s3_uri: str | None = None,
+        storage_uri: str | None = None,
         file_checksum: str | None = None,
         normal_watermark_after: Any | None = None,
         error_message: str | None = None,
@@ -612,30 +802,44 @@ class ControlAuditClient:
         sql = f"""
             UPDATE {REPROCESS_TABLE}
             SET
-                ENDED_AT = CURRENT_TIMESTAMP(),
+                ENDED_AT =
+                    CURRENT_TIMESTAMP(),
+
                 STATUS = %s,
+
                 SOURCE_ROW_COUNT = %s,
-                S3_URI = %s,
+
+                STORAGE_URI = %s,
+
                 FILE_CHECKSUM = %s,
+
                 NORMAL_WATERMARK_AFTER = %s,
+
                 ERROR_MESSAGE = %s,
-                UPDATED_AT = CURRENT_TIMESTAMP()
-            WHERE REPROCESS_AUDIT_ID = %s
+
+                UPDATED_AT =
+                    CURRENT_TIMESTAMP()
+
+            WHERE
+                REPROCESS_AUDIT_ID = %s
         """
 
         conn = self._connect()
 
         try:
+
             self._execute_transaction(
                 conn,
                 sql,
                 (
                     status.upper(),
                     source_row_count,
-                    s3_uri,
+                    storage_uri,
                     file_checksum,
                     normal_watermark_after,
-                    _clean_error_message(error_message),
+                    _clean_error_message(
+                        error_message
+                    ),
                     reprocess_audit_id,
                 ),
             )
@@ -643,13 +847,15 @@ class ControlAuditClient:
             logger.info(
                 (
                     "reprocess_audit_finished "
-                    "reprocess_audit_id=%s status=%s"
+                    "reprocess_audit_id=%s "
+                    "status=%s"
                 ),
                 reprocess_audit_id,
                 status.upper(),
             )
 
         except Exception as exc:
+
             logger.exception(
                 (
                     "reprocess_audit_finish_failed "
@@ -657,9 +863,11 @@ class ControlAuditClient:
                 ),
                 reprocess_audit_id,
             )
+
             raise ControlAuditError(
                 "Failed to finish reprocess audit"
             ) from exc
 
         finally:
+
             conn.close()

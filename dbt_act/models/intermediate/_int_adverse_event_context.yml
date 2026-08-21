@@ -8,6 +8,14 @@ models:
       Reusable adverse-event-level dataset enriched with subject,
       site and study context. Grain is one row per STUDY_ID + AE_ID.
 
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - ae_id
+
     columns:
 
       - name: study_id

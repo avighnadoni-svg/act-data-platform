@@ -1,0 +1,187 @@
+version: 2
+
+models:
+
+  - name: mart_safety_overview
+
+    description: >
+      Subject-level operational safety overview for ACT.
+      Combines adverse-event and laboratory indicators to
+      identify subjects requiring safety attention.
+      This mart is intended for operational monitoring and
+      does not represent a clinical diagnosis or medical
+      risk classification.
+      Grain is one row per STUDY_ID + SUBJECT_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - subject_id
+
+    columns:
+
+      - name: subject_key
+        data_type: varchar
+        description: Technical key identifying the subject.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: site_key
+        data_type: varchar
+        description: Technical key identifying the subject's site.
+        data_tests:
+          - not_null
+
+      - name: study_key
+        data_type: varchar
+        description: Technical key identifying the study.
+        data_tests:
+          - not_null
+
+      - name: study_id
+        data_type: varchar
+        description: Clinical-study business identifier.
+        data_tests:
+          - not_null
+
+      - name: site_id
+        data_type: varchar
+        description: Clinical-site business identifier.
+        data_tests:
+          - not_null
+
+      - name: subject_id
+        data_type: varchar
+        description: Clinical-subject business identifier.
+        data_tests:
+          - not_null
+
+      - name: study_name
+        data_type: varchar
+        description: Clinical study name.
+
+      - name: phase
+        data_type: varchar
+        description: Clinical trial phase.
+
+      - name: country
+        data_type: varchar
+        description: Country of the clinical site.
+
+      - name: investigator
+        data_type: varchar
+        description: Investigator associated with the site.
+
+      - name: gender
+        data_type: varchar
+        description: Subject gender.
+
+      - name: age
+        data_type: number(38,0)
+        description: Subject age.
+
+      - name: subject_status
+        data_type: varchar
+        description: Current subject status.
+
+      - name: enrollment_date
+        data_type: date
+        description: Subject enrollment date.
+
+      - name: adverse_event_count
+        data_type: number(38,0)
+        description: Total adverse events for the subject.
+        data_tests:
+          - not_null
+
+      - name: serious_ae_count
+        data_type: number(38,0)
+        description: Number of serious adverse events.
+        data_tests:
+          - not_null
+
+      - name: severe_ae_count
+        data_type: number(38,0)
+        description: Number of severe adverse events.
+        data_tests:
+          - not_null
+
+      - name: safety_review_ae_count
+        data_type: number(38,0)
+        description: Number of adverse events requiring safety review.
+        data_tests:
+          - not_null
+
+      - name: avg_ae_reporting_delay_days
+        data_type: number(10,2)
+        description: >
+          Average number of days between adverse-event occurrence
+          and reporting.
+
+      - name: max_ae_reporting_delay_days
+        data_type: number(38,0)
+        description: >
+          Maximum adverse-event reporting delay for the subject.
+
+      - name: lab_result_count
+        data_type: number(38,0)
+        description: Total laboratory results for the subject.
+        data_tests:
+          - not_null
+
+      - name: abnormal_lab_count
+        data_type: number(38,0)
+        description: Number of abnormal laboratory results.
+        data_tests:
+          - not_null
+
+      - name: max_absolute_range_variance
+        data_type: float
+        description: >
+          Largest absolute difference between a laboratory result
+          and its applicable reference-range boundary.
+
+      - name: has_serious_ae
+        data_type: boolean
+        description: >
+          True when the subject has at least one serious
+          adverse event.
+        data_tests:
+          - not_null
+
+      - name: has_severe_ae
+        data_type: boolean
+        description: >
+          True when the subject has at least one severe
+          adverse event.
+        data_tests:
+          - not_null
+
+      - name: has_abnormal_lab
+        data_type: boolean
+        description: >
+          True when the subject has at least one abnormal
+          laboratory result.
+        data_tests:
+          - not_null
+
+      - name: requires_safety_attention
+        data_type: boolean
+        description: >
+          Operational flag indicating that a subject has a
+          serious adverse event, an adverse event requiring
+          safety review, or an abnormal laboratory result.
+        data_tests:
+          - not_null
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+        description: Timestamp when dbt built the safety mart.

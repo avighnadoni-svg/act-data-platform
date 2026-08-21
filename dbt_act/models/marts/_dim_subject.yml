@@ -1,0 +1,207 @@
+version: 2
+
+models:
+
+  - name: dim_subject
+
+    description: >
+      Clinical subject dimension for the ACT data platform.
+      Grain is one row per STUDY_ID + SUBJECT_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - subject_id
+
+
+    columns:
+
+      # ==========================================================
+      # TECHNICAL KEYS
+      # ==========================================================
+
+      - name: subject_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + SUBJECT_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      - name: site_key
+        data_type: varchar
+
+        description: >
+          Technical key identifying the subject's parent site.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+
+
+      - name: study_key
+        data_type: varchar
+
+        description: >
+          Technical key identifying the subject's parent study.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: >
+          Parent clinical-study business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_type: varchar
+
+        description: >
+          Parent clinical-site business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: subject_id
+        data_type: varchar
+
+        description: >
+          Clinical subject business identifier.
+
+        data_tests:
+          - not_null
+
+
+      # ==========================================================
+      # SUBJECT ATTRIBUTES
+      # ==========================================================
+
+      - name: gender
+        data_type: varchar
+
+        description: >
+          Subject gender supplied by the source system.
+
+
+      - name: age
+        data_type: number(38,0)
+
+        description: >
+          Subject age.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 120
+                row_condition: "age is not null"
+
+
+      - name: status
+        data_type: varchar
+
+        description: >
+          Current clinical subject status.
+
+        data_tests:
+          - dbt_utils.not_empty_string
+
+
+      - name: enrollment_date
+        data_type: date
+
+        description: >
+          Date on which the subject was enrolled
+          into the clinical study.
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the subject was last updated
+          in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: >
+          Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: >
+          Source entity from which the subject was ingested.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow DAG run responsible for ingesting
+          the source record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the source record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the current
+          subject dimension row.

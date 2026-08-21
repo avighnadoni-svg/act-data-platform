@@ -1,34 +1,38 @@
 #!/usr/bin/env python3
+
 """
-Manual ACT study/entity reprocessing utility.
+Manual ACT study/entity historical reprocessing utility.
 
 Purpose
 -------
-Reprocess historical source records without changing the normal Snowflake
-incremental watermark.
+Reprocess historical Rave records without modifying the
+normal incremental Snowflake watermark.
 
-This is useful when the client corrects an older Rave record but does NOT
-change its UPDATED_AT value.
+This is useful when an older clinical source record must be
+replayed.
 
-Example
--------
-python scripts/reprocess_study_entity.py \
-    --study-id ONC102 \
-    --entity adverse_event \
-    --reprocess-from 2026-08-16T17:34:09+00:00
+Current local flow
+------------------
+Rave API
+    ->
+validate / normalize
+    ->
+StorageBackend
+    ->
+local filesystem
+    ->
+Snowflake internal RAW stage
 
 Important
 ---------
-The current mock Rave API supports only updated_since, not an upper-bound
-updated_before parameter. Therefore this utility reprocesses records FROM the
-requested timestamp onward.
+The current mock Rave API supports updated_since but does not
+support an upper-bound updated_before parameter.
 
-Snowflake is the single source of truth for the normal watermark:
+Therefore reprocessing operates FROM the requested timestamp
+forward.
 
-    ACT_DB.CONTROL.WATERMARK
-
-This utility READS the normal watermark before and after reprocessing for audit
-evidence, but it never calls update_watermark() or delete_watermark().
+The normal pipeline watermark is read for audit evidence but
+is never changed by this utility.
 
 Every manual reprocess is recorded in:
 
@@ -38,17 +42,28 @@ Every manual reprocess is recorded in:
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+)
 import os
 from pathlib import Path
 import sys
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
+)
 
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+    sys.path.insert(
+        0,
+        str(PROJECT_ROOT),
+    )
 
 
 from config.endpoints import (
@@ -63,10 +78,6 @@ from src.api.extract_all import (
 
 from src.api.rave_client import (
     RaveAPIClient,
-)
-
-from src.aws.s3_client import (
-    ACTS3Client,
 )
 
 from src.common.exceptions import (
@@ -90,6 +101,14 @@ from src.snowflake.control_audit import (
     ControlAuditClient,
 )
 
+from src.snowflake.stage_loader import (
+    SnowflakeStageLoader,
+)
+
+from src.storage.storage_factory import (
+    get_storage_backend,
+)
+
 from src.watermark.watermark_manager import (
     WatermarkManager,
 )
@@ -106,23 +125,28 @@ def _parse_iso_timestamp(
     value: str,
 ) -> datetime:
     """
-    Parse an ISO-8601 timestamp and normalize it to UTC.
+    Parse ISO-8601 and normalize to UTC.
     """
 
-    normalized = value.strip()
+    normalized = (
+        value.strip()
+    )
 
     if normalized.endswith("Z"):
+
         normalized = (
             normalized[:-1]
             + "+00:00"
         )
 
     try:
+
         parsed = datetime.fromisoformat(
             normalized
         )
 
     except ValueError as exc:
+
         raise ConfigurationError(
             (
                 "Invalid --reprocess-from timestamp. "
@@ -131,12 +155,11 @@ def _parse_iso_timestamp(
             )
         ) from exc
 
-
     if parsed.tzinfo is None:
+
         parsed = parsed.replace(
             tzinfo=timezone.utc
         )
-
 
     return parsed.astimezone(
         timezone.utc
@@ -144,27 +167,25 @@ def _parse_iso_timestamp(
 
 
 # ============================================================
-# INCLUSIVE REPROCESS LOWER BOUND
+# INCLUSIVE LOWER BOUND
 # ============================================================
 
 def _build_extraction_watermark(
     reprocess_from: str,
 ) -> str:
     """
-    The mock source API uses strict:
+    The source API uses:
 
         updated_at > updated_since
 
-    The user-facing reprocess_from is intended to be inclusive.
+    The user-facing reprocess timestamp should be inclusive.
 
-    Subtract one microsecond so a source row whose UPDATED_AT is exactly equal
-    to reprocess_from is included.
+    Therefore subtract one microsecond.
     """
 
     parsed = _parse_iso_timestamp(
         reprocess_from
     )
-
 
     extraction_start = (
         parsed
@@ -173,12 +194,14 @@ def _build_extraction_watermark(
         )
     )
 
-
-    return extraction_start.isoformat()
+    return (
+        extraction_start
+        .isoformat()
+    )
 
 
 # ============================================================
-# REPROCESS RUN ID
+# RUN ID
 # ============================================================
 
 def _build_run_id(
@@ -186,18 +209,16 @@ def _build_run_id(
     entity_name: str,
 ) -> str:
     """
-    Build a unique manual reprocess run identifier.
+    Build a unique reprocess run identifier.
     """
 
     now = datetime.now(
         timezone.utc
     )
 
-
     stamp = now.strftime(
         "%Y%m%dT%H%M%S%fZ"
     )
-
 
     return (
         f"reprocess__"
@@ -213,14 +234,12 @@ def _build_run_id(
 
 def _requested_by() -> str:
     """
-    Resolve a useful operator identity for REPROCESS_AUDIT.
-
-    In GitHub Codespaces this normally resolves from USER.
+    Resolve the local/operator identity.
     """
 
     return (
-        os.getenv("GITHUB_USER")
-        or os.getenv("USER")
+        os.getenv("USER")
+        or os.getenv("USERNAME")
         or "MANUAL_OPERATOR"
     )
 
@@ -235,17 +254,23 @@ def _read_watermark_best_effort(
     entity_name: str,
 ) -> str | None:
     """
-    Read the Snowflake normal watermark without hiding the
-    original reprocess exception if this read itself fails.
+    Read normal watermark without hiding the original failure
+    if this read itself fails.
     """
 
     try:
-        return watermark_manager.get_watermark(
-            study_id=study_id,
-            entity_name=entity_name,
+
+        return (
+            watermark_manager
+            .get_watermark(
+                study_id=study_id,
+                entity_name=
+                    entity_name,
+            )
         )
 
     except Exception:
+
         logger.exception(
             (
                 "manual_reprocess_watermark_read_failed "
@@ -260,7 +285,7 @@ def _read_watermark_best_effort(
 
 
 # ============================================================
-# BEST-EFFORT FAILED AUDIT FINALIZATION
+# FAILED REPROCESS AUDIT
 # ============================================================
 
 def _finish_failed_reprocess_audit(
@@ -272,26 +297,25 @@ def _finish_failed_reprocess_audit(
     error: Exception,
 ) -> None:
     """
-    Mark an already-started REPROCESS_AUDIT row FAILED.
+    Best-effort failed audit finalization.
 
-    Audit-finalization failure must never hide the original
-    reprocess exception.
+    Audit failure must not hide the original reprocess error.
     """
 
     if not reprocess_audit_id:
         return
 
-
     normal_watermark_after = (
         _read_watermark_best_effort(
-            watermark_manager=watermark_manager,
+            watermark_manager=
+                watermark_manager,
             study_id=study_id,
             entity_name=entity_name,
         )
     )
 
-
     try:
+
         control_audit_client.finish_reprocess(
             reprocess_audit_id=
                 reprocess_audit_id,
@@ -302,7 +326,7 @@ def _finish_failed_reprocess_audit(
             source_row_count=
                 None,
 
-            s3_uri=
+            storage_uri=
                 None,
 
             file_checksum=
@@ -316,6 +340,7 @@ def _finish_failed_reprocess_audit(
         )
 
     except Exception:
+
         logger.exception(
             (
                 "manual_reprocess_audit_failure_update_failed "
@@ -330,7 +355,7 @@ def _finish_failed_reprocess_audit(
 
 
 # ============================================================
-# MAIN REPROCESS FUNCTION
+# MAIN REPROCESS
 # ============================================================
 
 def reprocess_study_entity(
@@ -340,21 +365,22 @@ def reprocess_study_entity(
     page_size: int = DEFAULT_PAGE_SIZE,
 ) -> dict[str, Any]:
     """
-    Reprocess one study/entity from a historical timestamp onward.
+    Reprocess one study/entity from a historical timestamp.
 
-    Watermark behavior
-    ------------------
-    - Snowflake CONTROL.WATERMARK is the normal watermark source.
-    - The normal watermark is read before reprocessing.
-    - The normal watermark is read again after reprocessing.
-    - This function never updates or deletes the normal watermark.
+    Normal watermark behavior
+    -------------------------
+    The normal watermark is:
 
-    Reprocess audit behavior
-    ------------------------
-    - REPROCESS_AUDIT starts as RUNNING before source extraction.
-    - SUCCESS is recorded when data is uploaded successfully.
-    - NO_DATA is recorded when the source returns no matching records.
-    - FAILED is recorded when reprocessing raises an exception.
+        read before
+        read after
+
+    but never:
+
+        updated
+        deleted
+        reset
+
+    by this function.
     """
 
     study_id = (
@@ -363,36 +389,35 @@ def reprocess_study_entity(
         .upper()
     )
 
-
     entity_name = (
         entity_name
         .strip()
+        .lower()
     )
 
-
     if not study_id:
+
         raise ConfigurationError(
             "study_id cannot be empty"
         )
 
-
     if entity_name not in ENDPOINTS:
+
         raise ConfigurationError(
             f"Unknown entity={entity_name}"
         )
-
 
     if (
         page_size < 1
         or page_size > 100
     ):
+
         raise ConfigurationError(
             "page_size must be between 1 and 100"
         )
 
-
     # ========================================================
-    # VALIDATE / NORMALIZE REQUESTED LOWER BOUND
+    # REQUESTED LOWER BOUND
     # ========================================================
 
     requested_reprocess_from = (
@@ -402,13 +427,11 @@ def reprocess_study_entity(
         .isoformat()
     )
 
-
     extraction_watermark = (
         _build_extraction_watermark(
             requested_reprocess_from
         )
     )
-
 
     # ========================================================
     # RUN METADATA
@@ -419,7 +442,6 @@ def reprocess_study_entity(
         entity_name=entity_name,
     )
 
-
     load_date = (
         datetime.now(
             timezone.utc
@@ -428,11 +450,9 @@ def reprocess_study_entity(
         .isoformat()
     )
 
-
     requested_by = (
         _requested_by()
     )
-
 
     # ========================================================
     # COMPONENTS
@@ -442,61 +462,49 @@ def reprocess_study_entity(
         WatermarkManager()
     )
 
-
     control_audit_client = (
         ControlAuditClient()
     )
 
+    storage_backend = (
+        get_storage_backend()
+    )
+
+    stage_loader = (
+        SnowflakeStageLoader()
+    )
 
     # ========================================================
-    # NORMAL WATERMARK BEFORE REPROCESS
-    # ========================================================
-    #
-    # This is a READ ONLY operation.
+    # NORMAL WATERMARK BEFORE
     # ========================================================
 
     normal_watermark_before = (
-        watermark_manager.get_watermark(
+        watermark_manager
+        .get_watermark(
             study_id=study_id,
             entity_name=entity_name,
         )
     )
 
-
     # ========================================================
     # START REPROCESS AUDIT
     # ========================================================
-    #
-    # reprocess_to remains NULL because the current mock API
-    # does not support an upper-bound updated_before filter.
-    # ========================================================
 
     reprocess_audit_id = (
-        control_audit_client.start_reprocess(
-
-            dag_run_id=
-                run_id,
-
-            study_id=
-                study_id,
-
-            entity_name=
-                entity_name,
-
+        control_audit_client
+        .start_reprocess(
+            dag_run_id=run_id,
+            study_id=study_id,
+            entity_name=entity_name,
             reprocess_from=
                 requested_reprocess_from,
-
-            reprocess_to=
-                None,
-
+            reprocess_to=None,
             requested_by=
                 requested_by,
-
             normal_watermark_before=
                 normal_watermark_before,
         )
     )
-
 
     logger.warning(
         (
@@ -521,63 +529,48 @@ def reprocess_study_entity(
         normal_watermark_before,
     )
 
-
     try:
 
         # ====================================================
-        # SOURCE EXTRACTION
+        # 1. SOURCE EXTRACTION
         # ====================================================
 
         with RaveAPIClient() as api_client:
 
-            records, pages_processed = (
-                _extract_all_pages(
-                    client=
-                        api_client,
-
-                    study_id=
-                        study_id,
-
-                    entity_name=
-                        entity_name,
-
-                    extraction_watermark=
-                        extraction_watermark,
-
-                    page_size=
-                        page_size,
-                )
+            (
+                records,
+                pages_processed,
+            ) = _extract_all_pages(
+                client=api_client,
+                study_id=study_id,
+                entity_name=
+                    entity_name,
+                extraction_watermark=
+                    extraction_watermark,
+                page_size=page_size,
             )
 
-
         # ====================================================
-        # STUDY SCOPE VALIDATION
+        # 2. STUDY-SCOPE VALIDATION
         # ====================================================
 
         _validate_record_study_scope(
-            study_id=
-                study_id,
-
-            entity_name=
-                entity_name,
-
-            records=
-                records,
+            study_id=study_id,
+            entity_name=entity_name,
+            records=records,
         )
 
-
         # ====================================================
-        # DATA VALIDATION
+        # 3. VALIDATE RECORDS
         # ====================================================
 
-        validation = validate_records(
-            entity_name=
-                entity_name,
-
-            records=
-                records,
+        validation = (
+            validate_records(
+                entity_name=
+                    entity_name,
+                records=records,
+            )
         )
-
 
         # ====================================================
         # NO DATA
@@ -586,18 +579,15 @@ def reprocess_study_entity(
         if validation.record_count == 0:
 
             normal_watermark_after = (
-                watermark_manager.get_watermark(
-                    study_id=
-                        study_id,
-
+                watermark_manager
+                .get_watermark(
+                    study_id=study_id,
                     entity_name=
                         entity_name,
                 )
             )
 
-
             control_audit_client.finish_reprocess(
-
                 reprocess_audit_id=
                     reprocess_audit_id,
 
@@ -607,7 +597,7 @@ def reprocess_study_entity(
                 source_row_count=
                     0,
 
-                s3_uri=
+                storage_uri=
                     None,
 
                 file_checksum=
@@ -619,7 +609,6 @@ def reprocess_study_entity(
                 error_message=
                     None,
             )
-
 
             logger.info(
                 (
@@ -640,7 +629,6 @@ def reprocess_study_entity(
                 normal_watermark_before,
                 normal_watermark_after,
             )
-
 
             return {
                 "reprocess_audit_id":
@@ -667,10 +655,25 @@ def reprocess_study_entity(
                 "pages_processed":
                     pages_processed,
 
-                "uploaded":
+                "stored":
                     False,
 
-                "s3_uri":
+                "staged":
+                    False,
+
+                "storage_backend":
+                    storage_backend.backend_name,
+
+                "storage_path":
+                    None,
+
+                "storage_uri":
+                    None,
+
+                "stage_uri":
+                    None,
+
+                "stage_upload_status":
                     None,
 
                 "checksum":
@@ -698,83 +701,135 @@ def reprocess_study_entity(
                     "NO_DATA",
             }
 
-
         # ====================================================
-        # NORMALIZE
-        # ====================================================
-
-        normalized = normalize_dataframe(
-            entity_name=
-                entity_name,
-
-            df=
-                validation.dataframe,
-
-            run_id=
-                run_id,
-        )
-
-
-        # ====================================================
-        # S3 UPLOAD
+        # 4. NORMALIZE
         # ====================================================
 
-        upload_result = (
-            ACTS3Client()
-            .upload_dataframe(
+        normalized = (
+            normalize_dataframe(
                 entity_name=
                     entity_name,
-
-                study_id=
-                    study_id,
-
                 df=
-                    normalized.dataframe,
-
+                    validation.dataframe,
                 run_id=
                     run_id,
+            )
+        )
 
+        storage_row_count = len(
+            normalized.dataframe
+        )
+
+        # ====================================================
+        # 5. WRITE THROUGH STORAGE BACKEND
+        # ====================================================
+
+        storage_result = (
+            storage_backend
+            .write_dataframe(
+                entity_name=
+                    entity_name,
+                study_id=
+                    study_id,
+                dataframe=
+                    normalized.dataframe,
+                run_id=
+                    run_id,
                 load_date=
                     load_date,
             )
         )
 
+        if not storage_result.stored:
 
-        if not upload_result.uploaded:
             raise DataValidationError(
                 (
-                    "Reprocess returned records but "
-                    "did not produce an S3 object"
+                    "Reprocess returned records "
+                    "but did not produce a "
+                    "storage object"
                 )
             )
 
+        if (
+            storage_result.record_count
+            != storage_row_count
+        ):
+
+            raise DataValidationError(
+                (
+                    "Reprocess storage row-count "
+                    "mismatch. "
+                    f"expected="
+                    f"{storage_row_count}, "
+                    f"actual="
+                    f"{storage_result.record_count}"
+                )
+            )
+
+        if not storage_result.storage_path:
+
+            raise DataValidationError(
+                (
+                    "Current Snowflake internal-stage "
+                    "handoff requires storage_path. "
+                    f"backend="
+                    f"{storage_result.storage_backend}"
+                )
+            )
 
         # ====================================================
-        # NORMAL WATERMARK AFTER REPROCESS
+        # 6. SNOWFLAKE INTERNAL STAGE
+        # ====================================================
+
+        stage_result = (
+            stage_loader.upload_file(
+                local_file_path=
+                    storage_result.storage_path,
+                entity_name=
+                    entity_name,
+                study_id=
+                    study_id,
+                load_date=
+                    load_date,
+                run_id=
+                    run_id,
+            )
+        )
+
+        if (
+            stage_result.upload_status
+            not in {
+                "UPLOADED",
+                "SKIPPED",
+            }
+        ):
+
+            raise DataValidationError(
+                (
+                    "Historical reprocess failed "
+                    "Snowflake stage handoff. "
+                    f"status="
+                    f"{stage_result.upload_status}"
+                )
+            )
+
+        # ====================================================
+        # 7. NORMAL WATERMARK AFTER
         # ========================================================
         #
         # READ ONLY.
         #
-        # The reprocess path has made no call to:
-        #
-        #     update_watermark()
-        #     delete_watermark()
-        #
-        # If the value differs because a normal pipeline ran
-        # concurrently, that change is still captured in the
-        # audit rather than being overwritten here.
-        # ========================================================
+        # No update_watermark() call exists anywhere in this
+        # reprocess path.
+        # ====================================================
 
         normal_watermark_after = (
-            watermark_manager.get_watermark(
-                study_id=
-                    study_id,
-
-                entity_name=
-                    entity_name,
+            watermark_manager
+            .get_watermark(
+                study_id=study_id,
+                entity_name=entity_name,
             )
         )
-
 
         if (
             normal_watermark_before
@@ -798,13 +853,11 @@ def reprocess_study_entity(
                 normal_watermark_after,
             )
 
-
         # ====================================================
-        # COMPLETE REPROCESS AUDIT
+        # 8. COMPLETE REPROCESS AUDIT
         # ====================================================
 
         control_audit_client.finish_reprocess(
-
             reprocess_audit_id=
                 reprocess_audit_id,
 
@@ -814,11 +867,12 @@ def reprocess_study_entity(
             source_row_count=
                 validation.record_count,
 
-            s3_uri=
-                upload_result.s3_uri,
+            # Final verified handoff used by RAW processing.
+            storage_uri=
+                stage_result.stage_uri,
 
             file_checksum=
-                upload_result.checksum,
+                storage_result.checksum,
 
             normal_watermark_after=
                 normal_watermark_after,
@@ -826,7 +880,6 @@ def reprocess_study_entity(
             error_message=
                 None,
         )
-
 
         logger.info(
             (
@@ -837,7 +890,9 @@ def reprocess_study_entity(
                 "status=SUCCESS "
                 "records=%s "
                 "pages=%s "
-                "s3_uri=%s "
+                "storage_backend=%s "
+                "storage_uri=%s "
+                "stage_uri=%s "
                 "candidate_source_max_updated_at=%s "
                 "normal_watermark_before=%s "
                 "normal_watermark_after=%s "
@@ -848,12 +903,13 @@ def reprocess_study_entity(
             entity_name,
             validation.record_count,
             pages_processed,
-            upload_result.s3_uri,
+            storage_result.storage_backend,
+            storage_result.storage_uri,
+            stage_result.stage_uri,
             validation.max_watermark,
             normal_watermark_before,
             normal_watermark_after,
         )
-
 
         return {
             "reprocess_audit_id":
@@ -880,14 +936,29 @@ def reprocess_study_entity(
             "pages_processed":
                 pages_processed,
 
-            "uploaded":
-                upload_result.uploaded,
+            "stored":
+                True,
 
-            "s3_uri":
-                upload_result.s3_uri,
+            "staged":
+                True,
+
+            "storage_backend":
+                storage_result.storage_backend,
+
+            "storage_path":
+                storage_result.storage_path,
+
+            "storage_uri":
+                storage_result.storage_uri,
+
+            "stage_uri":
+                stage_result.stage_uri,
+
+            "stage_upload_status":
+                stage_result.upload_status,
 
             "checksum":
-                upload_result.checksum,
+                storage_result.checksum,
 
             "reprocess_from":
                 requested_reprocess_from,
@@ -914,34 +985,22 @@ def reprocess_study_entity(
                 "SUCCESS",
         }
 
-
-    # ========================================================
-    # FAILURE
-    # ========================================================
-
     except Exception as exc:
 
         _finish_failed_reprocess_audit(
-
             control_audit_client=
                 control_audit_client,
-
             reprocess_audit_id=
                 reprocess_audit_id,
-
             watermark_manager=
                 watermark_manager,
-
             study_id=
                 study_id,
-
             entity_name=
                 entity_name,
-
             error=
                 exc,
         )
-
 
         logger.exception(
             (
@@ -958,7 +1017,6 @@ def reprocess_study_entity(
             run_id,
         )
 
-
         raise
 
 
@@ -971,18 +1029,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Reprocess one ACT study/entity "
-            "without changing its Snowflake "
-            "normal watermark."
+            "without changing the normal "
+            "Snowflake watermark."
         )
     )
-
 
     parser.add_argument(
         "--study-id",
         required=True,
-        help="Study ID, for example ONC102",
+        help=(
+            "Study ID, for example ONC101"
+        ),
     )
-
 
     parser.add_argument(
         "--entity",
@@ -993,16 +1051,14 @@ def main() -> None:
         help="ACT source entity",
     )
 
-
     parser.add_argument(
         "--reprocess-from",
         required=True,
         help=(
-            "Inclusive ISO-8601 source UPDATED_AT "
-            "timestamp to reprocess from"
+            "Inclusive ISO-8601 source "
+            "UPDATED_AT timestamp"
         ),
     )
-
 
     parser.add_argument(
         "--page-size",
@@ -1010,9 +1066,7 @@ def main() -> None:
         default=DEFAULT_PAGE_SIZE,
     )
 
-
     args = parser.parse_args()
-
 
     result = reprocess_study_entity(
         study_id=
@@ -1028,13 +1082,16 @@ def main() -> None:
             args.page_size,
     )
 
-
     print()
-    print("REPROCESS RESULT")
-    print("================")
-
+    print(
+        "REPROCESS RESULT"
+    )
+    print(
+        "================"
+    )
 
     for key, value in result.items():
+
         print(
             f"{key}: {value}"
         )

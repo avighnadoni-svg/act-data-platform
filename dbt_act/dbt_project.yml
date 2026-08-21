@@ -26,8 +26,10 @@ clean-targets:
   - target
   - dbt_packages
 
+
 models:
   act_dbt:
+
     staging:
       +materialized: view
       +schema: staging
@@ -45,3 +47,13 @@ models:
       +schema: marts
       +tags:
         - marts
+
+
+vars:
+
+  dbt_project_evaluator:
+
+    marts_prefixes:
+      - dim_
+      - fct_
+      - mart_

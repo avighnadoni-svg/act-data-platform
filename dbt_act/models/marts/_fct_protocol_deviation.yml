@@ -1,0 +1,242 @@
+version: 2
+
+models:
+
+  - name: fct_protocol_deviation
+
+    description: >
+      Protocol-deviation fact table for the ACT analytical
+      dimensional model. Grain is one row per
+      STUDY_ID + DEVIATION_ID.
+
+    config:
+      contract:
+        enforced: true
+
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - deviation_id
+
+
+    columns:
+
+      # ==========================================================
+      # FACT KEY
+      # ==========================================================
+
+      - name: protocol_deviation_key
+        data_type: varchar
+
+        description: >
+          Deterministic technical key generated from
+          STUDY_ID + DEVIATION_ID.
+
+        data_tests:
+          - not_null
+          - unique
+
+
+      # ==========================================================
+      # DIMENSION KEYS
+      # ==========================================================
+
+      - name: study_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_STUDY.
+
+        data_tests:
+          - not_null
+
+          - relationships:
+              arguments:
+                to: ref('dim_study')
+                field: study_key
+
+
+      - name: site_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_SITE when the protocol deviation
+          is associated with a site. May be NULL when SITE_ID
+          is not provided by the source.
+
+        data_tests:
+
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+
+
+      - name: subject_key
+        data_type: varchar
+
+        description: >
+          Foreign key to DIM_SUBJECT when the protocol deviation
+          is associated with a subject. May be NULL when
+          SUBJECT_ID is not provided by the source.
+
+        data_tests:
+
+          - relationships:
+              arguments:
+                to: ref('dim_subject')
+                field: subject_key
+
+
+      # ==========================================================
+      # BUSINESS KEYS
+      # ==========================================================
+
+      - name: study_id
+        data_type: varchar
+
+        description: >
+          Parent clinical-study business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: deviation_id
+        data_type: varchar
+
+        description: >
+          Protocol-deviation business identifier.
+
+        data_tests:
+          - not_null
+
+
+      - name: site_id
+        data_type: varchar
+
+        description: >
+          Site associated with the protocol deviation.
+          May be NULL.
+
+
+      - name: subject_id
+        data_type: varchar
+
+        description: >
+          Subject associated with the protocol deviation.
+          May be NULL.
+
+
+      # ==========================================================
+      # DEVIATION ATTRIBUTES
+      # ==========================================================
+
+      - name: deviation_type
+        data_type: varchar
+
+        description: >
+          Category of the protocol deviation.
+
+        data_tests:
+          - not_null
+          - dbt_utils.not_empty_string
+
+
+      - name: severity
+        data_type: varchar
+
+        description: >
+          Severity classification of the protocol deviation.
+
+        data_tests:
+
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              arguments:
+                value_set:
+                  - MINOR
+                  - MAJOR
+                  - CRITICAL
+
+
+      # ==========================================================
+      # MEASURES
+      # ==========================================================
+
+      - name: protocol_deviation_count
+        data_type: number(38,0)
+
+        description: >
+          Additive measure with value 1 for each
+          protocol-deviation fact row.
+
+        data_tests:
+          - not_null
+
+          - accepted_values:
+              arguments:
+                values:
+                  - 1
+
+
+      # ==========================================================
+      # SOURCE TRACEABILITY
+      # ==========================================================
+
+      - name: source_updated_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when the protocol deviation was last
+          updated in the source system.
+
+
+      - name: record_hash
+        data_type: varchar
+
+        description: >
+          RAW business-content hash used for change detection.
+
+
+      - name: source_system
+        data_type: varchar
+
+        description: >
+          Source-system identifier.
+
+
+      - name: source_entity
+        data_type: varchar
+
+        description: >
+          Source entity identifier.
+
+
+      - name: dag_run_id
+        data_type: varchar
+
+        description: >
+          Airflow ingestion run responsible for
+          loading the record.
+
+
+      - name: ingested_at
+        data_type: timestamp_tz
+
+        description: >
+          Timestamp when ACT ingested the record.
+
+
+      # ==========================================================
+      # DBT AUDIT
+      # ==========================================================
+
+      - name: dbt_loaded_at
+        data_type: timestamp_ltz
+
+        description: >
+          Timestamp when dbt built the protocol-deviation
+          fact row.

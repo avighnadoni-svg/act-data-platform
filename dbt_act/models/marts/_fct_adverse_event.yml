@@ -13,111 +13,88 @@ models:
       contract:
         enforced: true
 
+    data_tests:
+
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - study_id
+              - ae_id
 
     columns:
 
-      # ==========================================================
-      # FACT KEY
-      # ==========================================================
-
       - name: adverse_event_key
         data_type: varchar
-
-        description: >
-          Deterministic technical key identifying
-          one adverse event.
-
+        description: Deterministic technical key identifying one adverse event.
         data_tests:
           - not_null
           - unique
 
-
-      # ==========================================================
-      # DIMENSION KEYS
-      # ==========================================================
-
       - name: study_key
         data_type: varchar
-
-        description: >
-          Foreign key to DIM_STUDY.
-
+        description: Foreign key to DIM_STUDY.
         data_tests:
           - not_null
-
           - relationships:
               arguments:
                 to: ref('dim_study')
                 field: study_key
 
-
       - name: site_key
         data_type: varchar
-
-        description: >
-          Foreign key to DIM_SITE.
-
+        description: Foreign key to DIM_SITE.
         data_tests:
           - not_null
-
           - relationships:
               arguments:
                 to: ref('dim_site')
                 field: site_key
 
-
       - name: subject_key
         data_type: varchar
-
-        description: >
-          Foreign key to DIM_SUBJECT.
-
+        description: Foreign key to DIM_SUBJECT.
         data_tests:
           - not_null
-
           - relationships:
               arguments:
                 to: ref('dim_subject')
                 field: subject_key
 
-
-      # ==========================================================
-      # BUSINESS KEY
-      # ==========================================================
-
-      - name: ae_id
+      - name: study_id
         data_type: varchar
-
-        description: >
-          Adverse-event business identifier.
-
+        description: Clinical-study business identifier.
         data_tests:
           - not_null
 
+      - name: site_id
+        data_type: varchar
+        description: Clinical-site business identifier.
+        data_tests:
+          - not_null
 
-      # ==========================================================
-      # EVENT ATTRIBUTES
-      # ==========================================================
+      - name: subject_id
+        data_type: varchar
+        description: Clinical-subject business identifier.
+        data_tests:
+          - not_null
+
+      - name: ae_id
+        data_type: varchar
+        description: Adverse-event business identifier.
+        data_tests:
+          - not_null
 
       - name: event_term
         data_type: varchar
-
-        description: >
-          Reported adverse-event term.
-
+        description: Reported adverse-event term.
         data_tests:
           - not_null
           - dbt_utils.not_empty_string
 
-
       - name: severity
         data_type: varchar
-
-        description: >
-          Severity of the adverse event.
-
+        description: Severity of the adverse event.
         data_tests:
-
           - dbt_expectations.expect_column_values_to_be_in_set:
               arguments:
                 value_set:
@@ -125,144 +102,77 @@ models:
                   - MODERATE
                   - SEVERE
 
-
       - name: serious
         data_type: varchar
-
-        description: >
-          Indicates whether the adverse event is serious.
-
+        description: Indicates whether the adverse event is serious.
         data_tests:
-
           - dbt_expectations.expect_column_values_to_be_in_set:
               arguments:
                 value_set:
                   - Y
                   - N
 
-
       - name: processing_priority
         data_type: varchar
-
-        description: >
-          Processing priority assigned to the adverse event.
-
+        description: Processing priority assigned to the adverse event.
 
       - name: requires_safety_review
         data_type: boolean
-
-        description: >
-          Indicates whether the adverse event requires
-          safety review.
-
-
-      # ==========================================================
-      # EVENT DATES
-      # ==========================================================
+        description: Indicates whether the adverse event requires safety review.
 
       - name: event_date
         data_type: date
-
-        description: >
-          Date on which the adverse event occurred.
-
+        description: Date on which the adverse event occurred.
 
       - name: reported_date
         data_type: date
-
-        description: >
-          Date on which the adverse event was reported.
-
-
-      # ==========================================================
-      # MEASURES
-      # ==========================================================
+        description: Date on which the adverse event was reported.
 
       - name: reporting_delay_days
         data_type: number(38,0)
-
         description: >
-          Number of calendar days between event occurrence
+          Number of calendar days between adverse-event occurrence
           and reporting.
-
         data_tests:
-
           - dbt_expectations.expect_column_values_to_be_between:
               arguments:
                 min_value: 0
                 row_condition: "reporting_delay_days is not null"
 
-
       - name: adverse_event_count
         data_type: number(38,0)
-
-        description: >
-          Additive fact measure with value 1 for each
-          adverse-event row.
-
+        description: Additive fact measure containing 1 for every adverse event.
         data_tests:
           - not_null
-
           - accepted_values:
               arguments:
                 values:
                   - 1
 
-
-      # ==========================================================
-      # TRACEABILITY
-      # ==========================================================
-
       - name: source_updated_at
         data_type: timestamp_tz
-
-        description: >
-          Latest source-system update timestamp
-          for the adverse event.
-
+        description: Latest source-system update timestamp.
 
       - name: record_hash
         data_type: varchar
-
-        description: >
-          RAW business-content hash used for change detection.
-
+        description: RAW business-content hash.
 
       - name: source_system
         data_type: varchar
-
-        description: >
-          Source-system identifier.
-
+        description: Source-system identifier.
 
       - name: source_entity
         data_type: varchar
-
-        description: >
-          Source entity identifier.
-
+        description: Source entity identifier.
 
       - name: dag_run_id
         data_type: varchar
-
-        description: >
-          Airflow ingestion run responsible for
-          loading the record.
-
+        description: Airflow ingestion DAG run identifier.
 
       - name: ingested_at
         data_type: timestamp_tz
-
-        description: >
-          Timestamp when ACT ingested the record.
-
-
-      # ==========================================================
-      # DBT AUDIT
-      # ==========================================================
+        description: ACT ingestion timestamp.
 
       - name: dbt_loaded_at
         data_type: timestamp_ltz
-
-        description: >
-          Timestamp when dbt built the fact row.
+        description: Timestamp when dbt built the fact row.

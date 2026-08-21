@@ -23,6 +23,7 @@ subject_dimension as (
         site_key,
         study_key,
         study_id,
+        site_id,
         subject_id
 
     from {{ ref('dim_subject') }}
@@ -56,8 +57,17 @@ final as (
 
 
         -- ========================================================
-        -- DEGENERATE BUSINESS KEY
+        -- BUSINESS KEYS
         -- ========================================================
+
+        cast(ae.study_id as varchar)
+            as study_id,
+
+        cast(subject.site_id as varchar)
+            as site_id,
+
+        cast(ae.subject_id as varchar)
+            as subject_id,
 
         cast(ae.ae_id as varchar)
             as ae_id,

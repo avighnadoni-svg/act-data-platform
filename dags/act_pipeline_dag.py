@@ -88,17 +88,19 @@ MAX_DISCOVERY_PAGES = 1000
         "ACT",
         "Clinical",
         "Rave",
-        "S3",
+        "Local-Storage",
         "Snowflake-Control",
         "Snowflake-RAW",
+        "dbt",
         "Incremental",
         "Multi-Study",
     ],
 
     description=(
-        "Multi-study ACT clinical ingestion "
-        "from Rave API to AWS S3 and Snowflake RAW "
-        "with Snowflake watermark and CONTROL auditing"
+        "Multi-study ACT clinical ingestion from Rave API "
+        "through local storage and Snowflake RAW, followed by "
+        "dbt dimensional and reporting model builds with "
+        "Snowflake watermark and CONTROL auditing"
     ),
 )
 def act_rave_ingestion():
@@ -1260,6 +1262,96 @@ def act_rave_ingestion():
 
     # ========================================================
     # TASK 8
+    # RUN DBT BUILD
+    # ========================================================
+
+    @task(
+        task_id="run_dbt_build",
+
+        retries=1,
+
+        retry_delay=timedelta(
+            minutes=1
+        ),
+
+        execution_timeout=timedelta(
+            minutes=45
+        ),
+    )
+    def run_dbt_build(
+        raw_summary: dict,
+    ) -> dict:
+        """
+        Build and test the complete ACT dbt project after all
+        Snowflake RAW processing has succeeded.
+
+        Airflow runs inside .airflow-venv, while dbt is
+        intentionally executed from the project .venv through
+        src.dbt.dbt_runner.DbtRunner.
+
+        The task fails when dbt returns a non-zero exit code,
+        which prevents a successful pipeline audit.
+        """
+
+        from src.dbt.dbt_runner import (
+            DbtRunner,
+        )
+
+
+        if not isinstance(
+            raw_summary,
+            dict,
+        ):
+
+            raise RuntimeError(
+                "Snowflake RAW summary unavailable before dbt build"
+            )
+
+
+        logger.info(
+            (
+                "dbt_build_task_started "
+                "raw_task_count=%s "
+                "raw_successful_task_count=%s"
+            ),
+            raw_summary.get(
+                "task_count"
+            ),
+            raw_summary.get(
+                "successful_task_count"
+            ),
+        )
+
+
+        result = (
+            DbtRunner()
+            .run_build()
+        )
+
+
+        result_dict = (
+            result.to_dict()
+        )
+
+
+        logger.info(
+            (
+                "dbt_build_task_completed "
+                "status=%s "
+                "return_code=%s "
+                "duration_seconds=%s"
+            ),
+            result.status,
+            result.return_code,
+            result.duration_seconds,
+        )
+
+
+        return result_dict
+
+
+    # ========================================================
+    # TASK 9
     # FINISH PIPELINE RUN AUDIT
     # ========================================================
 
@@ -1297,21 +1389,27 @@ def act_rave_ingestion():
 
         Status is determined from:
 
-        1. Expected API/S3 work-item count from Airflow XCom.
+        1. Expected ingestion work-item count from Airflow XCom.
         2. Latest ENTITY_LOAD_AUDIT status for every
            study + entity in the current DAG run.
         3. Snowflake RAW processing summary.
+        4. dbt build result.
 
         SUCCESS requires:
 
-            all study/entity API -> S3 work items successful
+            all study/entity ingestion work items successful
 
         AND
 
             all eight Snowflake RAW entity tasks successful
 
-        Any failed, missing, or incomplete API/S3 item or
-        Snowflake RAW item makes the pipeline audit FAILED.
+        AND
+
+            dbt build completed successfully
+
+        Any failed, missing, or incomplete ingestion item,
+        Snowflake RAW item, or dbt build makes the pipeline
+        audit FAILED.
         """
 
         import snowflake.connector
@@ -1366,6 +1464,14 @@ def act_rave_ingestion():
             ti.xcom_pull(
                 task_ids=
                     "summarize_snowflake_raw"
+            )
+        )
+
+
+        dbt_summary = (
+            ti.xcom_pull(
+                task_ids=
+                    "run_dbt_build"
             )
         )
 
@@ -1663,6 +1769,61 @@ def act_rave_ingestion():
                 )
 
 
+        # ====================================================
+        # DBT VALIDATION
+        # ====================================================
+
+        dbt_status = None
+
+        dbt_return_code = None
+
+
+        if not isinstance(
+            dbt_summary,
+            dict,
+        ):
+
+            error_parts.append(
+                "dbt build summary unavailable"
+            )
+
+
+        else:
+
+            dbt_status = (
+                dbt_summary.get(
+                    "status"
+                )
+            )
+
+
+            dbt_return_code = (
+                dbt_summary.get(
+                    "return_code"
+                )
+            )
+
+
+            if dbt_status != "SUCCESS":
+
+                error_parts.append(
+                    (
+                        "dbt_status="
+                        f"{dbt_status}"
+                    )
+                )
+
+
+            if dbt_return_code != 0:
+
+                error_parts.append(
+                    (
+                        "dbt_return_code="
+                        f"{dbt_return_code}"
+                    )
+                )
+
+
         if error_parts:
 
             final_status = "FAILED"
@@ -1757,6 +1918,12 @@ def act_rave_ingestion():
             "expected_snowflake_raw_tasks":
                 expected_raw_tasks,
 
+            "dbt_status":
+                dbt_status,
+
+            "dbt_return_code":
+                dbt_return_code,
+
             "error_message":
                 error_message,
         }
@@ -1776,7 +1943,9 @@ def act_rave_ingestion():
                 "incomplete_items=%s "
                 "raw_tasks=%s "
                 "raw_successful_tasks=%s "
-                "expected_raw_tasks=%s"
+                "expected_raw_tasks=%s "
+                "dbt_status=%s "
+                "dbt_return_code=%s"
             ),
             pipeline_audit_id,
             run_id,
@@ -1790,6 +1959,8 @@ def act_rave_ingestion():
             raw_task_count,
             raw_successful_task_count,
             expected_raw_tasks,
+            dbt_status,
+            dbt_return_code,
         )
 
 
@@ -1851,7 +2022,7 @@ def act_rave_ingestion():
 
 
     # ========================================================
-    # API -> S3
+    # API -> LOCAL STORAGE -> SNOWFLAKE INTERNAL STAGE
     #
     # Current lab:
     #
@@ -1879,12 +2050,12 @@ def act_rave_ingestion():
 
 
     # ========================================================
-    # S3 -> SNOWFLAKE RAW
+    # SNOWFLAKE INTERNAL STAGE -> SNOWFLAKE RAW
     #
     # One task per entity, not per study.
     #
-    # Each existing Option 3 SQL file processes all new S3
-    # files for that entity across studies.
+    # Each Option 3 SQL file processes all new staged files
+    # for that entity across studies.
     # ========================================================
 
     raw_entities = (
@@ -1894,7 +2065,7 @@ def act_rave_ingestion():
 
     # --------------------------------------------------------
     # Do not start Snowflake RAW processing until the complete
-    # API -> S3 ingestion stage has succeeded.
+    # API -> local storage -> stage ingestion has succeeded.
     # --------------------------------------------------------
 
     ingestion_summary >> raw_entities
@@ -1919,6 +2090,17 @@ def act_rave_ingestion():
 
 
     # ========================================================
+    # DBT BUILD
+    # ========================================================
+
+    dbt_result = (
+        run_dbt_build(
+            raw_summary
+        )
+    )
+
+
+    # ========================================================
     # PIPELINE FINALIZER
     # ========================================================
 
@@ -1930,17 +2112,20 @@ def act_rave_ingestion():
 
 
     # --------------------------------------------------------
-    # final_audit waits until the Snowflake RAW stage is
-    # terminal.
+    # final_audit waits until the dbt stage is terminal.
     #
-    # If an upstream task fails:
-    #   raw_summary becomes upstream_failed
-    #   final_audit still runs because trigger_rule=all_done
-    #   final_audit writes PIPELINE_RUN_AUDIT=FAILED
-    #   final_audit then raises so the Airflow DAG is FAILED.
+    # If RAW processing fails:
+    #   dbt_result becomes upstream_failed
+    #
+    # If dbt fails:
+    #   dbt_result is failed
+    #
+    # In both cases final_audit still runs because it uses
+    # trigger_rule=all_done. It writes PIPELINE_RUN_AUDIT=FAILED
+    # and then raises so the Airflow DAG is also FAILED.
     # --------------------------------------------------------
 
-    raw_summary >> final_audit
+    dbt_result >> final_audit
 
 
 # ============================================================
